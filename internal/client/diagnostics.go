@@ -47,6 +47,20 @@ type Diagnostics struct {
 	TailscaleDataPath     string // No | Yes | Unverified
 	Warnings              []string
 	LastError             string
+	ICESessionID          string
+	WGPeerFingerprint     string
+	WGAllowedIPs          []string
+	WGLastHandshake       string
+	WGTxBytes             uint64
+	WGRxBytes             uint64
+	BindHasActiveConn     bool
+	BindSendPackets       uint64
+	BindSendBytes         uint64
+	BindSendNoTransport   uint64
+	BindSendErrors        uint64
+	BindRecvPackets       uint64
+	BindRecvBytes         uint64
+	BindRecvDropped       uint64
 }
 
 // Diagnose gathers signaling and path diagnostics for a peer.
@@ -120,6 +134,23 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.Warnings = append(d.Warnings, tailscalePathWarnings(d)...)
 
 	if peerName != "" {
+		r.mu.Lock()
+		if link, ok := r.peerLinks[peerName]; ok && link != nil {
+			d.ICESessionID = link.SessionID
+			if link.Path.ConnectionState != "" {
+				d.ICEState = link.Path.ConnectionState
+			}
+			if link.Path.Connection != "" {
+				d.Connection = link.Path.Connection
+			}
+			d.TURNUsed = link.Path.TURNUsed
+			d.LocalType = link.Path.LocalType
+			d.RemoteType = link.Path.RemoteType
+			d.LocalAddr = link.Path.LocalAddr
+			d.RemoteAddr = link.Path.RemoteAddr
+		}
+		r.mu.Unlock()
+
 		peers, err := r.api.Peers()
 		if err != nil {
 			d.Warnings = append(d.Warnings, "peer list: "+err.Error())

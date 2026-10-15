@@ -376,8 +376,32 @@ func printDiagnostics(d client.Diagnostics) {
 		fmt.Printf("  RTT:    %s\n", formatRTT(d.RTT))
 	}
 	fmt.Printf("  TURN Used: %v\n", d.TURNUsed)
+	if d.ICESessionID != "" {
+		fmt.Printf("  ICE session:    %s\n", d.ICESessionID)
+	}
 	if d.LastComm != "" {
 		fmt.Printf("  Last ping: %s\n", d.LastComm)
+	}
+	if d.WGPeerFingerprint != "" || d.BindSendPackets > 0 || d.BindRecvPackets > 0 {
+		fmt.Println()
+		fmt.Println("WireGuard / ICE bind:")
+		if d.WGPeerFingerprint != "" {
+			fmt.Printf("  Peer key FP:     %s\n", d.WGPeerFingerprint)
+		}
+		if len(d.WGAllowedIPs) > 0 {
+			fmt.Printf("  Allowed IPs:     %v\n", d.WGAllowedIPs)
+		}
+		if d.WGLastHandshake != "" {
+			fmt.Printf("  Last handshake:  %s\n", d.WGLastHandshake)
+		}
+		if d.WGTxBytes > 0 || d.WGRxBytes > 0 {
+			fmt.Printf("  WG TX/RX bytes:  %d / %d\n", d.WGTxBytes, d.WGRxBytes)
+		}
+		fmt.Printf("  Bind active ICE: %v\n", d.BindHasActiveConn)
+		fmt.Printf("  Bind send pkts:  %d (%d bytes, no-transport=%d, errors=%d)\n",
+			d.BindSendPackets, d.BindSendBytes, d.BindSendNoTransport, d.BindSendErrors)
+		fmt.Printf("  Bind recv pkts:  %d (%d bytes, dropped=%d)\n",
+			d.BindRecvPackets, d.BindRecvBytes, d.BindRecvDropped)
 	}
 	fmt.Println()
 	fmt.Println("Tailscale Dependency:")

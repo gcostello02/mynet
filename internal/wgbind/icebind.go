@@ -1,6 +1,7 @@
 package wgbind
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -9,6 +10,9 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 )
+
+// ErrNoTransport is returned when WireGuard sends before an ICE conn is attached.
+var ErrNoTransport = errors.New("no ice transport for peer")
 
 const defaultWGPort = 51820
 const maxWGPacket = 65535
@@ -36,10 +40,16 @@ func (e *PeerEndpoint) DstToBytes() []byte {
 func (e *PeerEndpoint) DstIP() netip.Addr { return e.VPNIP }
 func (e *PeerEndpoint) SrcIP() netip.Addr { return netip.Addr{} }
 
+type peerTransport struct {
+	conn      net.Conn
+	closed    chan struct{} // closed when readLoop exits (conn dead or replaced)
+	counters  *peerCounters
+}
+
 // ICEBind sends WireGuard datagrams over nominated ice.Conn instances.
 type ICEBind struct {
 	mu          sync.RWMutex
-	byIP        map[netip.Addr]net.Conn
+	byIP        map[netip.Addr]*peerTransport
 	byConn      map[net.Conn]netip.Addr
 	inbound     chan inboundPkt
 	closeSignal chan struct{}
@@ -57,7 +67,7 @@ type inboundPkt struct {
 
 func NewICEBind() *ICEBind {
 	return &ICEBind{
-		byIP:        make(map[netip.Addr]net.Conn),
+		byIP:        make(map[netip.Addr]*peerTransport),
 		byConn:      make(map[net.Conn]netip.Addr),
 		inbound:     make(chan inboundPkt, 256),
 		ipv6Wait:    make(chan []byte),
@@ -72,27 +82,92 @@ func (b *ICEBind) SetPeerConn(vpnIP netip.Addr, c net.Conn) {
 		b.mu.Unlock()
 		return
 	}
-	if old, ok := b.byIP[vpnIP]; ok && old != c {
-		delete(b.byConn, old)
-		_ = old.Close()
+	var ctr *peerCounters
+	if old, ok := b.byIP[vpnIP]; ok {
+		ctr = old.counters
+		if old.conn != c {
+			delete(b.byConn, old.conn)
+			_ = old.conn.Close()
+		}
+	} else {
+		ctr = &peerCounters{}
 	}
-	b.byIP[vpnIP] = c
+	pt := &peerTransport{conn: c, closed: make(chan struct{}), counters: ctr}
+	b.byIP[vpnIP] = pt
 	b.byConn[c] = vpnIP
 	b.mu.Unlock()
-	go b.readLoop(vpnIP, c)
+	go b.readLoop(vpnIP, pt)
 }
 
 func (b *ICEBind) RemovePeer(vpnIP netip.Addr) {
 	b.mu.Lock()
-	if c, ok := b.byIP[vpnIP]; ok {
+	if pt, ok := b.byIP[vpnIP]; ok {
 		delete(b.byIP, vpnIP)
-		delete(b.byConn, c)
-		_ = c.Close()
+		delete(b.byConn, pt.conn)
+		_ = pt.conn.Close()
 	}
 	b.mu.Unlock()
 }
 
-func (b *ICEBind) readLoop(vpnIP netip.Addr, c net.Conn) {
+// WaitPeerTransport blocks until the ICE read loop for vpnIP exits (conn closed/replaced).
+func (b *ICEBind) WaitPeerTransport(ctx context.Context, vpnIP netip.Addr) bool {
+	b.mu.RLock()
+	pt, ok := b.byIP[vpnIP]
+	b.mu.RUnlock()
+	if !ok || pt == nil {
+		return true
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-pt.closed:
+		return true
+	}
+}
+
+// Stats returns a snapshot of bind and per-peer transport counters.
+func (b *ICEBind) Stats() BindStats {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	st := BindStats{
+		Shutdown: b.shutdown,
+		Open:     b.open,
+	}
+	for ip, pt := range b.byIP {
+		if pt == nil {
+			continue
+		}
+		st.Peers = append(st.Peers, PeerTransportStats{
+			VPNIP:           ip,
+			HasActiveConn:   pt.conn != nil,
+			SendPackets:     pt.counters.sendPackets.Load(),
+			SendBytes:       pt.counters.sendBytes.Load(),
+			SendNoTransport: pt.counters.sendNoTransport.Load(),
+			SendErrors:      pt.counters.sendErrors.Load(),
+			RecvPackets:     pt.counters.recvPackets.Load(),
+			RecvBytes:       pt.counters.recvBytes.Load(),
+			RecvDropped:     pt.counters.recvDropped.Load(),
+			ReadLoopExits:   pt.counters.readLoopExits.Load(),
+		})
+	}
+	return st
+}
+
+// HasPeerTransport reports whether an ICE conn is currently attached for vpnIP.
+func (b *ICEBind) HasPeerTransport(vpnIP netip.Addr) bool {
+	b.mu.RLock()
+	pt, ok := b.byIP[vpnIP]
+	active := ok && pt != nil && pt.conn != nil
+	b.mu.RUnlock()
+	return active
+}
+
+func (b *ICEBind) readLoop(vpnIP netip.Addr, pt *peerTransport) {
+	defer func() {
+		pt.counters.readLoopExits.Add(1)
+		close(pt.closed)
+	}()
+	c := pt.conn
 	buf := make([]byte, maxWGPacket)
 	ep := &PeerEndpoint{VPNIP: vpnIP}
 	for {
@@ -103,6 +178,8 @@ func (b *ICEBind) readLoop(vpnIP netip.Addr, c net.Conn) {
 		if n == 0 {
 			continue
 		}
+		pt.counters.recvPackets.Add(1)
+		pt.counters.recvBytes.Add(uint64(n))
 		pkt := append([]byte(nil), buf[:n]...)
 		b.mu.RLock()
 		shutdown := b.shutdown
@@ -122,6 +199,7 @@ func (b *ICEBind) readLoop(vpnIP netip.Addr, c net.Conn) {
 		select {
 		case inbound <- inboundPkt{data: pkt, ep: ep}:
 		default:
+			pt.counters.recvDropped.Add(1)
 			if sig != nil {
 				select {
 				case inbound <- inboundPkt{data: pkt, ep: ep}:
@@ -226,10 +304,12 @@ func (b *ICEBind) Shutdown() error {
 	b.inbound = nil
 	b.recvFns = nil
 	conns := make([]net.Conn, 0, len(b.byIP))
-	for _, c := range b.byIP {
-		conns = append(conns, c)
+	for _, pt := range b.byIP {
+		if pt != nil {
+			conns = append(conns, pt.conn)
+		}
 	}
-	b.byIP = make(map[netip.Addr]net.Conn)
+	b.byIP = make(map[netip.Addr]*peerTransport)
 	b.byConn = make(map[net.Conn]netip.Addr)
 	b.mu.Unlock()
 
@@ -258,22 +338,27 @@ func (b *ICEBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	}
 	b.mu.RLock()
 	shutdown := b.shutdown
-	c, hasConn := b.byIP[pe.VPNIP]
+	pt, hasConn := b.byIP[pe.VPNIP]
 	b.mu.RUnlock()
 	if shutdown {
 		return net.ErrClosed
 	}
-	if !hasConn || c == nil {
-		// No ICE path yet (peer not connected); drop silently during bring-up.
-		return nil
+	if !hasConn || pt == nil || pt.conn == nil {
+		if pt != nil {
+			pt.counters.sendNoTransport.Add(1)
+		}
+		return ErrNoTransport
 	}
 	for _, buf := range bufs {
 		if len(buf) > maxWGPacket {
 			return fmt.Errorf("packet too large: %d", len(buf))
 		}
-		if _, err := c.Write(buf); err != nil {
+		if _, err := pt.conn.Write(buf); err != nil {
+			pt.counters.sendErrors.Add(1)
 			return err
 		}
+		pt.counters.sendPackets.Add(1)
+		pt.counters.sendBytes.Add(uint64(len(buf)))
 	}
 	return nil
 }

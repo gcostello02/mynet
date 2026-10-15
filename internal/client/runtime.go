@@ -437,6 +437,12 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	if err := r.ensureWebSocket(); err != nil {
 		return nil, icepkg.PathInfo{}, err
 	}
+	if r.vpnMode {
+		r.mu.Lock()
+		r.lastRemoteCandidates = nil
+		r.lastLocalCandidates = nil
+		r.mu.Unlock()
+	}
 	sig := &signalState{}
 
 	// Register signaling handler first so peer ICE messages are not dropped.
