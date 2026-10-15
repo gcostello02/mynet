@@ -110,24 +110,16 @@ func CleanupRoutes(ifName string) error {
 	return nil
 }
 
-// RouteConflict reports if peer IP is already routed elsewhere (best-effort).
+// RouteConflict reports explicit routing-table conflicts for peer/32 installation.
 func RouteConflict(peer netip.Addr) error {
 	switch runtime.GOOS {
 	case "darwin":
-		out, err := exec.Command("netstat", "-rn").Output()
-		if err != nil {
-			return nil
-		}
-		if strings.Contains(string(out), peer.String()) {
-			return fmt.Errorf("route may already exist for %s", peer)
-		}
+		return darwinRouteConflict(peer)
 	case "linux":
-		out, err := exec.Command("ip", "route", "get", peer.String()).Output()
-		if err == nil && len(out) > 0 && !strings.Contains(string(out), "unreachable") {
-			return fmt.Errorf("existing route for %s: %s", peer, strings.TrimSpace(string(out)))
-		}
+		return linuxRouteConflict(peer)
+	default:
+		return nil
 	}
-	return nil
 }
 
 func run(name string, args ...string) error {
