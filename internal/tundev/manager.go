@@ -65,7 +65,7 @@ func (m *Manager) Configure(prefix netip.Prefix) error {
 	if m.ifName == "" {
 		return fmt.Errorf("tun not open")
 	}
-	if err := Configure(m.ifName, prefix); err != nil {
+	if err := ConfigureAndActivate(m.ifName, prefix); err != nil {
 		return err
 	}
 	m.configured = true
@@ -83,7 +83,7 @@ func (m *Manager) AddPeerRoute(peer netip.Addr) error {
 		return err
 	}
 	if err := addHostRoute(peer, ifName); err != nil {
-		return err
+		return fmt.Errorf("install /32 route to %s via %s: %w", peer, ifName, err)
 	}
 	m.mu.Lock()
 	m.routes = append(m.routes, peer)
@@ -106,6 +106,7 @@ func (m *Manager) Cleanup() error {
 		_ = deleteHostRoute(peer, ifName)
 	}
 	if t != nil {
+		// May already be closed by wireguard device.Close during engine teardown.
 		_ = t.Close()
 	}
 	return nil
