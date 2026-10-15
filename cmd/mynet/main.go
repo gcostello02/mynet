@@ -218,6 +218,18 @@ func main() {
 			configUsage()
 			os.Exit(2)
 		}
+	case "daemon":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: mynet daemon stop")
+			os.Exit(2)
+		}
+		switch os.Args[2] {
+		case "stop":
+			cmdDaemonStop(log)
+		default:
+			fmt.Fprintf(os.Stderr, "unknown daemon subcommand %q (try: mynet daemon stop)\n", os.Args[2])
+			os.Exit(2)
+		}
 	case "up":
 		cmdUp(log)
 	case "down":
@@ -405,7 +417,8 @@ Usage:
   mynet config show | tailnet | independent | set-server
   mynet preflight
   mynet up
-  mynet down
+  mynet down          (stops VPN; daemon may keep running)
+  mynet daemon stop   (exit signaling daemon)
 
 Environment:
   MYNET_ENROLLMENT_SECRET  enrollment secret for first login`)

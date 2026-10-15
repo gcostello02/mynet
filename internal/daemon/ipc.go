@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"net"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/gcostello02/mynet/internal/config"
 )
@@ -42,21 +40,8 @@ type PreflightResponse struct {
 
 // ServeIPC listens on a Unix socket and dispatches node commands.
 func ServeIPC(stateDir string, node *Node) error {
-	path := SocketPath(stateDir)
-	_ = os.Remove(path)
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		return err
-	}
-	_ = os.Chmod(path, 0o600)
-	_ = chownToSudoInvoker(path)
-	for {
-		c, err := ln.Accept()
-		if err != nil {
-			return err
-		}
-		go handleConn(c, node)
-	}
+	s := &Service{StateDir: stateDir, Node: node}
+	return s.Run()
 }
 
 func chownToSudoInvoker(path string) error {
@@ -74,43 +59,6 @@ func chownToSudoInvoker(path string) error {
 	uid, _ := strconv.Atoi(ou.Uid)
 	gid, _ := strconv.Atoi(ou.Gid)
 	return os.Chown(path, uid, gid)
-}
-
-func handleConn(c net.Conn, node *Node) {
-	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(120 * time.Second))
-	var req Request
-	if err := json.NewDecoder(c).Decode(&req); err != nil {
-		writeResp(c, Response{OK: false, Error: err.Error()})
-		return
-	}
-	switch req.Method {
-	case "ping":
-		writeResp(c, Response{OK: true})
-	case "preflight":
-		plan, paths, err := node.Preflight()
-		if err != nil {
-			writeResp(c, Response{OK: false, Error: err.Error()})
-			return
-		}
-		writeResp(c, Response{OK: true, Preflight: &PreflightResponse{Plan: plan, Paths: paths}})
-	case "up":
-		err := node.Up(context.Background())
-		if err != nil {
-			writeResp(c, Response{OK: false, Error: err.Error()})
-			return
-		}
-		st := node.Status()
-		writeResp(c, Response{OK: true, Status: &st})
-	case "down":
-		err := node.Down()
-		writeResp(c, Response{OK: err == nil, Error: errString(err)})
-	case "status":
-		st := node.Status()
-		writeResp(c, Response{OK: true, Status: &st})
-	default:
-		writeResp(c, Response{OK: false, Error: "unknown method"})
-	}
 }
 
 func errString(err error) string {
@@ -148,7 +96,7 @@ func DaemonReachable(stateDir string) bool {
 	return err == nil && resp.OK
 }
 
-// RemoveStaleSocket removes the socket if no live daemon owns it.
+// RemoveStaleSocket removes the socket and pid file only when no daemon responds and the pid is not alive.
 func RemoveStaleSocket(stateDir string) error {
 	path := SocketPath(stateDir)
 	if _, err := os.Stat(path); err != nil {
@@ -157,6 +105,10 @@ func RemoveStaleSocket(stateDir string) error {
 	if DaemonReachable(stateDir) {
 		return nil
 	}
+	if IsProcessAlive(stateDir) {
+		return nil
+	}
+	_ = os.Remove(PIDPath(stateDir))
 	return os.Remove(path)
 }
 

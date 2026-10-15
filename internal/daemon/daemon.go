@@ -228,6 +228,13 @@ func shouldInitiateICE(selfID, peerID string) bool {
 	return selfID < peerID
 }
 
+// VPNActive reports whether the VPN data plane is up.
+func (n *Node) VPNActive() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.running
+}
+
 // Down tears down VPN resources.
 func (n *Node) Down() error {
 	n.mu.Lock()
@@ -238,11 +245,14 @@ func (n *Node) Down() error {
 	engine := n.engine
 	rt := n.rt
 	tunMgr := n.tunMgr
+	tunName := n.tunName
 	n.running = false
 	n.engine = nil
 	n.rt = nil
 	n.bind = nil
 	n.tunMgr = nil
+	n.tunName = ""
+	n.vpnIP = netip.Addr{}
 	n.peers = nil
 	n.mu.Unlock()
 
@@ -255,7 +265,7 @@ func (n *Node) Down() error {
 	if tunMgr != nil {
 		_ = tunMgr.Cleanup()
 	}
-	_ = tundev.CleanupRoutes(n.tunName)
+	_ = tundev.CleanupRoutes(tunName)
 	return nil
 }
 

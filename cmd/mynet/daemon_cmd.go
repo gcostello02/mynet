@@ -72,11 +72,14 @@ func cmdUp(log *slog.Logger) {
 	if err := ensureDaemon(log); err != nil {
 		fatal(err)
 	}
-	resp, err := daemon.CallIPC(stateDir(), "up")
+	dir := stateDir()
+	resp, err := daemon.CallIPC(dir, "up")
 	if err != nil {
+		_ = daemon.RequestQuit(dir)
 		fatal(err)
 	}
 	if !resp.OK {
+		_ = daemon.RequestQuit(dir)
 		fatal(fmt.Errorf("%s", resp.Error))
 	}
 	if resp.Status != nil {
@@ -97,7 +100,24 @@ func cmdDown(log *slog.Logger) {
 	if !resp.OK && resp.Error != "" {
 		fatal(fmt.Errorf("%s", resp.Error))
 	}
-	fmt.Println("MyNet VPN stopped.")
+	if daemon.DaemonReachable(dir) {
+		fmt.Println("MyNet VPN stopped. (Signaling daemon still running; use: mynet daemon stop)")
+	} else {
+		fmt.Println("MyNet VPN stopped.")
+	}
+}
+
+func cmdDaemonStop(log *slog.Logger) {
+	dir := stateDir()
+	if !daemon.DaemonReachable(dir) {
+		_ = daemon.RemoveStaleSocket(dir)
+		fmt.Println("MyNet daemon not running.")
+		return
+	}
+	if err := daemon.RequestQuit(dir); err != nil {
+		fatal(err)
+	}
+	fmt.Println("MyNet daemon stopped.")
 }
 
 func cmdVPNStatus(log *slog.Logger) {
