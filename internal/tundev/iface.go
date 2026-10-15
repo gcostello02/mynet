@@ -18,7 +18,9 @@ func activateInterface(ifName string) error {
 		}
 		return nil
 	case "darwin":
-		// ifconfig in Configure assigns address and typically marks the interface up.
+		if err := run("ifconfig", ifName, "up"); err != nil {
+			return fmt.Errorf("ifconfig up: %w", err)
+		}
 		return nil
 	default:
 		return fmt.Errorf("unsupported GOOS %s", runtime.GOOS)

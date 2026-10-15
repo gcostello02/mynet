@@ -15,11 +15,10 @@ var routeMu sync.Mutex
 var installedRoutes []string
 
 // Open creates a TUN interface (requires elevated privileges on real hosts).
+// On macOS the returned name is the OS-assigned utunN. On Linux it is usually mynet0.
 func Open(name string) (tun.Device, string, error) {
-	if name == "" {
-		name = "mynet0"
-	}
-	dev, err := tun.CreateTUN(name, 1420)
+	createName := createTUNName(name)
+	dev, err := tun.CreateTUN(createName, 1420)
 	if err != nil {
 		return nil, "", err
 	}
