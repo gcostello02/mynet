@@ -52,7 +52,7 @@ func main() {
 
 	vpnCIDR := os.Getenv("MYNET_VPN_CIDR")
 	if vpnCIDR == "" {
-		vpnCIDR = "10.77.0.0/16"
+		vpnCIDR = "172.31.240.0/20"
 	}
 
 	srv, err := server.New(server.Config{

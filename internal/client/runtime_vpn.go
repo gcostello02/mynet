@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"net"
 	"time"
@@ -35,20 +36,64 @@ func (r *Runtime) PeerLink(peerName string) (*PeerLink, bool) {
 
 // ConnectPeerVPN establishes ICE to a peer for WireGuard transport (initiator).
 func (r *Runtime) ConnectPeerVPN(peerName string) (*PeerLink, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	return r.ConnectPeerVPNContext(ctx, peerName)
+}
+
+// ConnectPeerVPNContext is like ConnectPeerVPN but respects cancellation and avoids duplicate sessions.
+func (r *Runtime) ConnectPeerVPNContext(ctx context.Context, peerName string) (*PeerLink, error) {
 	if err := r.load(); err != nil {
 		return nil, err
 	}
 	if r.api.Token == "" {
 		return nil, errors.New("not logged in")
 	}
+	if l, ok := r.PeerLink(peerName); ok {
+		return l, nil
+	}
 	r.SetVPNMode(true)
 	if err := r.ensureWebSocket(); err != nil {
 		return nil, err
 	}
-	waitCh := make(chan error, 1)
 	r.mu.Lock()
-	r.vpnWait = map[string]chan error{peerName: waitCh}
+	if r.vpnConnecting == nil {
+		r.vpnConnecting = make(map[string]bool)
+	}
+	if r.vpnConnecting[peerName] {
+		waitCh := r.vpnWait[peerName]
+		r.mu.Unlock()
+		if waitCh == nil {
+			return nil, errors.New("peer connection already in progress")
+		}
+		select {
+		case err := <-waitCh:
+			if err != nil {
+				return nil, err
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		link, ok := r.PeerLink(peerName)
+		if !ok {
+			return nil, errors.New("peer link missing after ICE")
+		}
+		return link, nil
+	}
+	waitCh := make(chan error, 1)
+	if r.vpnWait == nil {
+		r.vpnWait = make(map[string]chan error)
+	}
+	r.vpnWait[peerName] = waitCh
+	r.vpnConnecting[peerName] = true
 	r.mu.Unlock()
+
+	defer func() {
+		r.mu.Lock()
+		delete(r.vpnConnecting, peerName)
+		delete(r.vpnWait, peerName)
+		r.mu.Unlock()
+	}()
 
 	_, err := r.api.CreateSession(peerName)
 	if err != nil {
@@ -59,8 +104,8 @@ func (r *Runtime) ConnectPeerVPN(peerName string) (*PeerLink, error) {
 		if err != nil {
 			return nil, err
 		}
-	case <-time.After(45 * time.Second):
-		return nil, errors.New("ICE connection timed out")
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 	link, ok := r.PeerLink(peerName)
 	if !ok {

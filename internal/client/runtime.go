@@ -67,9 +67,10 @@ type Runtime struct {
 
 	serverICE []control.ICEServer
 
-	vpnMode   bool
-	peerLinks map[string]*PeerLink
-	vpnWait   map[string]chan error
+	vpnMode       bool
+	peerLinks     map[string]*PeerLink
+	vpnWait       map[string]chan error
+	vpnConnecting map[string]bool
 }
 
 // APIClient returns the coordination HTTP client (session token if logged in).

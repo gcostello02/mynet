@@ -29,6 +29,11 @@ func (s *Store) AllocateVPNIPv4(deviceID string, wgPublicKeyHex string, pool *ne
 		}
 	}
 
+	if dev.VPNIPv4 != "" {
+		if !IPInPool(net.ParseIP(dev.VPNIPv4), pool) {
+			dev.VPNIPv4 = ""
+		}
+	}
 	if dev.VPNIPv4 == "" {
 		ip, err := s.nextFreeHost(pool)
 		if err != nil {
@@ -53,20 +58,12 @@ func (s *Store) nextFreeHost(pool *net.IPNet) (string, error) {
 			used[d.VPNIPv4] = true
 		}
 	}
-	base := pool.IP.To4()
-	if base == nil {
+	mask := pool.Mask
+	network := pool.IP.To4().Mask(mask)
+	if network == nil {
 		return "", fmt.Errorf("vpn pool must be ipv4")
 	}
-	mask := pool.Mask
-	// Start at .1, skip network/broadcast heuristics for /16 lab network.
-	for host := 1; host <= 65534; host++ {
-		ip := make(net.IP, 4)
-		copy(ip, base)
-		ip[2] += byte(host >> 8)
-		ip[3] += byte(host & 0xff)
-		if !pool.Contains(ip) {
-			continue
-		}
+	for ip := incIPv4(network); pool.Contains(ip); ip = incIPv4(ip) {
 		if isNetworkOrBroadcast(ip, mask) {
 			continue
 		}
