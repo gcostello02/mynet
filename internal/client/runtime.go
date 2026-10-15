@@ -1,0 +1,733 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/grantcostello/mynet/internal/config"
+	"github.com/grantcostello/mynet/internal/control"
+	icepkg "github.com/grantcostello/mynet/internal/ice"
+	"github.com/grantcostello/mynet/internal/identity"
+	"github.com/grantcostello/mynet/internal/peer"
+)
+
+// ConnState describes high-level peer connectivity.
+type ConnState string
+
+const (
+	StateDisconnected ConnState = "Disconnected"
+	StateRegistered   ConnState = "Registered"
+	StateOnline       ConnState = "Online"
+	StateConnecting   ConnState = "Connecting"
+	StateConnected    ConnState = "Connected"
+	StateFailed       ConnState = "Connection failed"
+)
+
+// Runtime coordinates control plane and ICE data plane for one device.
+type Runtime struct {
+	StateDir string
+	Logger   *slog.Logger
+
+	mu sync.Mutex
+
+	identity *identity.DeviceIdentity
+	cfg      config.ClientConfig
+	api      *control.APIClient
+
+	ws       *websocket.Conn
+	wsCancel context.CancelFunc
+
+	activeSession        string
+	peerName             string
+	connState            ConnState
+	icePath              icepkg.PathInfo
+	dataConn             net.Conn
+	iceSession           interface{ Close() error }
+	lastRTT              time.Duration
+	lastErr              string
+	lastPingAt           time.Time
+	lastLocalCandidates  []icepkg.CandidateInfo
+	lastRemoteCandidates []icepkg.CandidateInfo
+	connectOpts          ConnectOptions
+
+	connectWait chan error // initiator waits for ICE result
+	iceCancel   context.CancelFunc
+
+	signalMu       sync.Mutex
+	signalHandlers map[string]func(control.WSMessage)
+	pendingSignals map[string][]control.WSMessage
+
+	serverICE []control.ICEServer
+
+	vpnMode   bool
+	peerLinks map[string]*PeerLink
+	vpnWait   map[string]chan error
+}
+
+// APIClient returns the coordination HTTP client (session token if logged in).
+func (r *Runtime) APIClient() *control.APIClient {
+	return r.api
+}
+
+func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
+	if log == nil {
+		log = slog.Default()
+	}
+	if stateDir == "" {
+		stateDir = config.DefaultStateDir()
+	}
+	return &Runtime{
+		StateDir:       stateDir,
+		Logger:         log,
+		connState:      StateDisconnected,
+		signalHandlers: make(map[string]func(control.WSMessage)),
+		pendingSignals: make(map[string][]control.WSMessage),
+	}
+}
+
+func (r *Runtime) Init(name string) error {
+	id, err := identity.Generate(name)
+	if err != nil {
+		return err
+	}
+	if err := identity.Save(config.IdentityPath(r.StateDir), id); err != nil {
+		return err
+	}
+	cfg := config.DefaultClientConfig()
+	if err := config.SaveClientConfig(r.StateDir, cfg); err != nil {
+		return err
+	}
+	r.identity = id
+	r.cfg = cfg
+	return nil
+}
+
+// LoadSessionOnly loads identity/config and session token without opening signaling.
+func (r *Runtime) LoadSessionOnly() error {
+	return r.load()
+}
+
+func (r *Runtime) load() error {
+	id, err := identity.Load(config.IdentityPath(r.StateDir))
+	if err != nil {
+		return fmt.Errorf("identity not found, run mynet init: %w", err)
+	}
+	cfg, err := config.LoadClientConfig(r.StateDir)
+	if err != nil {
+		return err
+	}
+	r.identity = id
+	r.cfg = cfg
+	r.api = control.NewAPIClient(cfg.ServerURL)
+	tok, err := config.LoadSessionToken(r.StateDir)
+	if err == nil && tok.Token != "" {
+		r.api.Token = tok.Token
+		if r.connState == StateDisconnected {
+			r.connState = StateRegistered
+		}
+	}
+	return nil
+}
+
+// Login enrolls (if needed) and authenticates, then maintains signaling websocket.
+func (r *Runtime) Login(enrollmentSecret string) error {
+	if err := r.load(); err != nil {
+		return err
+	}
+	if enrollmentSecret != "" {
+		if err := r.api.Enroll(r.identity, enrollmentSecret); err != nil {
+			if !strings.Contains(err.Error(), "already") && !strings.Contains(err.Error(), "409") {
+				return fmt.Errorf("enroll: %w", err)
+			}
+		}
+	}
+	resp, err := r.api.Auth(r.identity)
+	if err != nil {
+		return err
+	}
+	if err := config.SaveSessionToken(r.StateDir, config.SessionToken{
+		Token:     resp.Token,
+		ExpiresAt: resp.ExpiresAt,
+	}); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.connState = StateRegistered
+	r.mu.Unlock()
+	r.refreshICEServers()
+	return r.ensureWebSocket()
+}
+
+func (r *Runtime) refreshICEServers() {
+	if r.api == nil {
+		return
+	}
+	if iceResp, err := r.api.ICEServers(); err == nil {
+		r.serverICE = iceResp.ICEServers
+	} else {
+		r.Logger.Debug("ice-servers fetch failed", "err", err)
+	}
+}
+
+func (r *Runtime) iceServersForSession() []control.ICEServer {
+	return config.BuildICEServers(r.cfg, r.serverICE)
+}
+
+func (r *Runtime) ensureWebSocket() error {
+	r.mu.Lock()
+	if r.ws != nil {
+		r.mu.Unlock()
+		return nil
+	}
+	r.mu.Unlock()
+	conn, err := r.api.ConnectWebSocket()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.mu.Lock()
+	r.ws = conn
+	r.wsCancel = cancel
+	r.connState = StateOnline
+	r.mu.Unlock()
+
+	go r.wsReadLoop(ctx, conn)
+	return nil
+}
+
+func (r *Runtime) wsReadLoop(ctx context.Context, conn *websocket.Conn) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			r.mu.Lock()
+			r.ws = nil
+			if r.wsCancel != nil {
+				r.wsCancel()
+			}
+			if r.dataConn == nil {
+				if r.connState == StateOnline || r.connState == StateConnecting {
+					r.connState = StateRegistered
+				}
+			}
+			r.mu.Unlock()
+			return
+		}
+		var msg control.WSMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+		r.Logger.Debug("ws recv", "type", msg.Type, "session_id", msg.SessionID)
+		switch msg.Type {
+		case control.SignalSessionReady:
+			payloadBytes, _ := json.Marshal(msg.Payload)
+			var ready control.SessionReadyPayload
+			if err := json.Unmarshal(payloadBytes, &ready); err != nil {
+				continue
+			}
+			if ready.SessionID == "" {
+				ready.SessionID = msg.SessionID
+			}
+			go r.handleIncomingSession(ready)
+		default:
+			r.dispatchSignal(msg)
+		}
+	}
+}
+
+func (r *Runtime) Peers() ([]control.PeerInfo, error) {
+	if err := r.load(); err != nil {
+		return nil, err
+	}
+	if r.api.Token == "" {
+		return nil, errors.New("not logged in; run mynet login")
+	}
+	if err := r.ensureWebSocket(); err != nil {
+		r.Logger.Warn("websocket unavailable", "err", err)
+	}
+	return r.api.Peers()
+}
+
+// Connect starts ICE with the named peer (caller is controlling).
+func (r *Runtime) Connect(peerName string) error {
+	return r.ConnectWithOptions(peerName, ConnectOptions{})
+}
+
+// ConnectWithOptions starts ICE with optional relay-only mode.
+func (r *Runtime) ConnectWithOptions(peerName string, opts ConnectOptions) error {
+	if err := r.load(); err != nil {
+		return err
+	}
+	if r.api.Token == "" {
+		return errors.New("not logged in; run mynet login")
+	}
+	if opts.RelayOnly {
+		r.refreshICEServers()
+		if !hasTURNServer(r.serverICE) && !hasTURNServer(config.BuildICEServers(r.cfg, nil)) {
+			return errors.New("relay-only requires TURN (server MYNET_TURN_* or client turn_urls); run mynet login after server TURN is configured")
+		}
+	}
+	if err := r.ensureWebSocket(); err != nil {
+		return err
+	}
+	waitCh := make(chan error, 1)
+	r.mu.Lock()
+	r.connectWait = waitCh
+	r.peerName = peerName
+	r.connectOpts = opts
+	r.lastLocalCandidates = nil
+	r.lastRemoteCandidates = nil
+	r.mu.Unlock()
+
+	_, err := r.api.CreateSession(peerName)
+	if err != nil {
+		r.mu.Lock()
+		r.connectWait = nil
+		r.mu.Unlock()
+		return err
+	}
+
+	select {
+	case err := <-waitCh:
+		r.mu.Lock()
+		r.connectWait = nil
+		r.mu.Unlock()
+		return err
+	case <-time.After(45 * time.Second):
+		r.mu.Lock()
+		r.connectWait = nil
+		r.mu.Unlock()
+		return errors.New("ICE connection timed out")
+	}
+}
+
+func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
+	r.mu.Lock()
+	if r.activeSession == ready.SessionID && (r.connState == StateConnecting || r.connState == StateConnected) {
+		r.mu.Unlock()
+		return
+	}
+	if r.activeSession != "" && r.activeSession != ready.SessionID {
+		if r.iceCancel != nil {
+			r.iceCancel()
+			r.iceCancel = nil
+		}
+		if r.dataConn != nil {
+			_ = r.dataConn.Close()
+			r.dataConn = nil
+		}
+		if r.iceSession != nil {
+			_ = r.iceSession.Close()
+			r.iceSession = nil
+		}
+	}
+	r.activeSession = ready.SessionID
+	r.peerName = ready.PeerName
+	r.connState = StateConnecting
+	r.mu.Unlock()
+	controlling := ready.Role == "controlling"
+	r.mu.Lock()
+	opts := r.connectOpts
+	r.mu.Unlock()
+	conn, path, err := r.runICESession(ready.SessionID, ready.PeerName, controlling, opts)
+	if err != nil {
+		r.Logger.Error("ICE session failed", "session", ready.SessionID, "controlling", controlling, "err", err)
+		r.mu.Lock()
+		if !r.vpnMode {
+			r.connState = StateFailed
+		}
+		r.lastErr = err.Error()
+		if !r.vpnMode {
+			r.activeSession = ""
+		}
+		r.mu.Unlock()
+		if r.vpnMode {
+			r.failPeerVPN(ready.PeerName, err)
+		}
+	} else if r.vpnMode && conn != nil {
+		r.storePeerLink(ready.PeerName, ready.SessionID, conn, path)
+	}
+	if controlling && !r.vpnMode {
+		r.mu.Lock()
+		ch := r.connectWait
+		r.mu.Unlock()
+		if ch != nil {
+			if err != nil {
+				ch <- err
+			} else {
+				ch <- nil
+			}
+		}
+	}
+}
+
+type signalState struct {
+	mu              sync.Mutex
+	iceSess         *icepkg.Session
+	remoteUfrag     string
+	remotePwd       string
+	remoteCredReady bool
+	candidates      []string
+	gatherDone      bool
+	peerGatherDone  bool
+}
+
+func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, opts ConnectOptions) (net.Conn, icepkg.PathInfo, error) {
+	if err := r.ensureWebSocket(); err != nil {
+		return nil, icepkg.PathInfo{}, err
+	}
+	sig := &signalState{}
+
+	// Register signaling handler first so peer ICE messages are not dropped.
+	r.setSignalHandler(sessionID, func(msg control.WSMessage) {
+		switch msg.Type {
+		case control.SignalICECredentials:
+			payloadBytes, _ := json.Marshal(msg.Payload)
+			var cred control.ICECredentialsPayload
+			if json.Unmarshal(payloadBytes, &cred) == nil {
+				sig.mu.Lock()
+				sig.remoteUfrag = cred.Ufrag
+				sig.remotePwd = cred.Pwd
+				sig.remoteCredReady = true
+				sig.mu.Unlock()
+			}
+		case control.SignalICECandidate:
+			payloadBytes, _ := json.Marshal(msg.Payload)
+			var cand control.ICECandidatePayload
+			if json.Unmarshal(payloadBytes, &cand) == nil {
+				if iceSess := sig.iceSess; iceSess != nil {
+					_ = iceSess.AddRemoteCandidate(cand.Candidate)
+				} else {
+					sig.mu.Lock()
+					sig.candidates = append(sig.candidates, cand.Candidate)
+					sig.mu.Unlock()
+				}
+				r.mu.Lock()
+				r.lastRemoteCandidates = append(r.lastRemoteCandidates, icepkg.SummarizeRemoteCandidate(cand.Candidate))
+				r.mu.Unlock()
+			}
+		case control.SignalGatherDone:
+			sig.mu.Lock()
+			sig.peerGatherDone = true
+			sig.mu.Unlock()
+		}
+	})
+	defer r.clearSignalHandler(sessionID)
+
+	sess, err := icepkg.NewSession(icepkg.SessionConfig{
+		Controlling:              controlling,
+		ICEServers:               r.iceServersForSession(),
+		AllowTailscaleCandidates: r.cfg.ICESessionAllowTailscale(),
+		ExcludeCIDRs:             r.cfg.ParsedExcludeCIDRs(),
+		ExcludeInterfaces:        r.cfg.Network.ExcludeInterfaces,
+		RelayOnly:                opts.RelayOnly,
+	})
+	if err != nil {
+		return nil, icepkg.PathInfo{}, err
+	}
+	sig.iceSess = sess
+
+	sig.mu.Lock()
+	pending := append([]string(nil), sig.candidates...)
+	sig.mu.Unlock()
+	for _, c := range pending {
+		_ = sess.AddRemoteCandidate(c)
+	}
+
+	if err := sess.SetCandidateHandler(func(cand string) {
+		if cand == "" {
+			_ = r.sendSignal(sessionID, control.WSMessage{
+				Type:    control.SignalGatherDone,
+				Payload: map[string]string{"status": "complete"},
+			})
+			sig.mu.Lock()
+			sig.gatherDone = true
+			sig.mu.Unlock()
+			return
+		}
+		_ = r.sendSignal(sessionID, control.WSMessage{
+			Type:    control.SignalICECandidate,
+			Payload: control.ICECandidatePayload{Candidate: cand},
+		})
+	}); err != nil {
+		return nil, icepkg.PathInfo{}, err
+	}
+
+	ufrag, pwd, err := sess.LocalCredentials()
+	if err != nil {
+		return nil, icepkg.PathInfo{}, err
+	}
+	if err := r.sendSignal(sessionID, control.WSMessage{
+		Type:    control.SignalICECredentials,
+		Payload: control.ICECredentialsPayload{Ufrag: ufrag, Pwd: pwd},
+	}); err != nil {
+		return nil, icepkg.PathInfo{}, err
+	}
+
+	deadline := time.Now().Add(icepkg.ConnectTimeout)
+	for time.Now().Before(deadline) {
+		sig.mu.Lock()
+		ready := sig.remoteCredReady
+		sig.mu.Unlock()
+		if ready {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	sig.mu.Lock()
+	if !sig.remoteCredReady {
+		sig.mu.Unlock()
+		return nil, icepkg.PathInfo{}, errors.New("timed out waiting for peer ICE credentials")
+	}
+	remoteUfrag, remotePwd := sig.remoteUfrag, sig.remotePwd
+	sig.mu.Unlock()
+
+	if err := sess.Gather(); err != nil {
+		return nil, icepkg.PathInfo{}, err
+	}
+	if err := waitGatherComplete(sig, 8*time.Second); err != nil {
+		return nil, icepkg.PathInfo{}, err
+	}
+	loc, err := sess.LocalCandidates()
+	if err == nil {
+		r.mu.Lock()
+		r.lastLocalCandidates = loc
+		r.mu.Unlock()
+	}
+	if opts.RelayOnly {
+		hasRelay := false
+		for _, c := range loc {
+			if strings.Contains(c.Type, "relay") {
+				hasRelay = true
+				break
+			}
+		}
+		if !hasRelay {
+			return nil, icepkg.PathInfo{}, errors.New("relay-only: no local TURN relay candidates gathered (check TURN reachability and credentials)")
+		}
+	}
+
+	iceCtx, iceCancel := context.WithTimeout(context.Background(), icepkg.ConnectTimeout)
+	r.mu.Lock()
+	if r.iceCancel != nil {
+		r.iceCancel()
+	}
+	r.iceCancel = iceCancel
+	r.mu.Unlock()
+	defer iceCancel()
+
+	conn, err := sess.Connect(iceCtx, remoteUfrag, remotePwd)
+	if err != nil {
+		return nil, icepkg.PathInfo{}, fmt.Errorf("ICE failed: %w", err)
+	}
+	path := sess.Path()
+
+	r.mu.Lock()
+	if r.vpnMode {
+		r.mu.Unlock()
+		return conn, path, nil
+	}
+	r.dataConn = conn
+	r.iceSession = sess
+	r.icePath = path
+	r.connState = StateConnected
+	r.peerName = peerName
+	r.activeSession = sessionID
+	r.mu.Unlock()
+
+	// Controlled peer services inbound app frames (e.g. ping). Controlling peer reads in PingRTT.
+	if !controlling {
+		go r.readDataLoop(conn)
+	}
+	return conn, path, nil
+}
+
+func (r *Runtime) readDataLoop(conn net.Conn) {
+	for {
+		frame, err := peer.ReadFrame(conn, 60*time.Second)
+		if err != nil {
+			return
+		}
+		if resp := peer.RespondPing(frame); resp != nil {
+			_, _ = conn.Write(resp)
+		}
+	}
+}
+
+// Ping sends an application-level ping over the established ICE connection.
+func (r *Runtime) Ping(peerName string) (time.Duration, error) {
+	if err := r.load(); err != nil {
+		return 0, err
+	}
+	r.mu.Lock()
+	conn := r.dataConn
+	state := r.connState
+	if peerName != "" && r.peerName != peerName {
+		r.mu.Unlock()
+		return 0, fmt.Errorf("not connected to peer %q", peerName)
+	}
+	r.mu.Unlock()
+	if state != StateConnected || conn == nil {
+		return 0, errors.New("not directly connected; run mynet connect --peer <name>")
+	}
+	rtt, err := peer.PingRTT(conn, 5*time.Second)
+	if err != nil {
+		return 0, err
+	}
+	r.mu.Lock()
+	r.lastRTT = rtt
+	r.lastPingAt = time.Now()
+	r.mu.Unlock()
+	return rtt, nil
+}
+
+// Status snapshot for CLI output.
+type Status struct {
+	DeviceName string
+	PeerName   string
+	State      ConnState
+	Transport  string
+	Connection string
+	TURNUsed   bool
+	Local      string
+	Remote     string
+	LocalType  string
+	RemoteType string
+	ICEState   string
+	RTT        time.Duration
+	LastError  string
+	ServerURL  string
+	Signaling  string
+}
+
+func (r *Runtime) Status() (Status, error) {
+	if err := r.load(); err != nil {
+		return Status{}, err
+	}
+	r.mu.Lock()
+	st := Status{
+		DeviceName: r.identity.Name,
+		PeerName:   r.peerName,
+		State:      r.connState,
+		Transport:  r.icePath.Transport,
+		Connection: r.icePath.Connection,
+		TURNUsed:   r.icePath.TURNUsed,
+		Local:      r.icePath.LocalAddr,
+		Remote:     r.icePath.RemoteAddr,
+		LocalType:  r.icePath.LocalType,
+		RemoteType: r.icePath.RemoteType,
+		ICEState:   r.icePath.ConnectionState,
+		RTT:        r.lastRTT,
+		LastError:  r.lastErr,
+		ServerURL:  r.cfg.ServerURL,
+		Signaling:  "Disconnected",
+	}
+	if r.ws != nil {
+		st.Signaling = "Connected"
+	}
+	r.mu.Unlock()
+	if st.State == StateDisconnected && r.api != nil && r.api.Token != "" {
+		st.State = StateRegistered
+	}
+	return st, nil
+}
+
+func (r *Runtime) sendSignal(sessionID string, msg control.WSMessage) error {
+	r.mu.Lock()
+	ws := r.ws
+	r.mu.Unlock()
+	if ws == nil {
+		return errors.New("signaling websocket not connected")
+	}
+	msg.SessionID = sessionID
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return ws.WriteMessage(websocket.TextMessage, data)
+}
+
+const maxPendingPerSession = 64
+
+func (r *Runtime) setSignalHandler(sessionID string, fn func(control.WSMessage)) {
+	r.signalMu.Lock()
+	r.signalHandlers[sessionID] = fn
+	queued := r.pendingSignals[sessionID]
+	delete(r.pendingSignals, sessionID)
+	r.signalMu.Unlock()
+	for _, msg := range queued {
+		fn(msg)
+	}
+}
+
+func (r *Runtime) clearSignalHandler(sessionID string) {
+	r.signalMu.Lock()
+	delete(r.signalHandlers, sessionID)
+	delete(r.pendingSignals, sessionID)
+	r.signalMu.Unlock()
+}
+
+func waitGatherComplete(sig *signalState, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		sig.mu.Lock()
+		local := sig.gatherDone
+		sig.mu.Unlock()
+		if local {
+			// Allow trickle candidates from the peer after our gathering completes.
+			time.Sleep(400 * time.Millisecond)
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return errors.New("local ICE gathering did not complete")
+}
+
+func (r *Runtime) dispatchSignal(msg control.WSMessage) {
+	r.signalMu.Lock()
+	fn := r.signalHandlers[msg.SessionID]
+	if fn == nil {
+		q := r.pendingSignals[msg.SessionID]
+		if len(q) < maxPendingPerSession {
+			r.pendingSignals[msg.SessionID] = append(q, msg)
+		}
+		r.signalMu.Unlock()
+		return
+	}
+	r.signalMu.Unlock()
+	fn(msg)
+}
+
+// Down closes connections without touching system networking.
+func (r *Runtime) Down() error {
+	r.mu.Lock()
+	if r.wsCancel != nil {
+		r.wsCancel()
+	}
+	if r.ws != nil {
+		_ = r.ws.Close()
+		r.ws = nil
+	}
+	if r.dataConn != nil {
+		_ = r.dataConn.Close()
+		r.dataConn = nil
+	}
+	if r.iceSession != nil {
+		_ = r.iceSession.Close()
+		r.iceSession = nil
+	}
+	r.connState = StateDisconnected
+	r.activeSession = ""
+	r.mu.Unlock()
+	return nil
+}

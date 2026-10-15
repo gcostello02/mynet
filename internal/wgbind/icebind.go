@@ -1,0 +1,316 @@
+package wgbind
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"sync"
+
+	"golang.zx2c4.com/wireguard/conn"
+)
+
+const defaultWGPort = 51820
+const maxWGPacket = 65535
+
+// PeerEndpoint is the logical WireGuard endpoint (VPN IP + fixed port).
+type PeerEndpoint struct {
+	VPNIP netip.Addr
+}
+
+var (
+	_ conn.Bind     = (*ICEBind)(nil)
+	_ conn.Endpoint = (*PeerEndpoint)(nil)
+)
+
+func (e *PeerEndpoint) ClearSrc()           {}
+func (e *PeerEndpoint) SrcToString() string { return "" }
+func (e *PeerEndpoint) DstToString() string {
+	return fmt.Sprintf("%s:%d", e.VPNIP, defaultWGPort)
+}
+func (e *PeerEndpoint) DstToBytes() []byte {
+	ap := netip.AddrPortFrom(e.VPNIP, defaultWGPort)
+	b, _ := ap.MarshalBinary()
+	return b
+}
+func (e *PeerEndpoint) DstIP() netip.Addr { return e.VPNIP }
+func (e *PeerEndpoint) SrcIP() netip.Addr { return netip.Addr{} }
+
+// ICEBind sends WireGuard datagrams over nominated ice.Conn instances.
+type ICEBind struct {
+	mu          sync.RWMutex
+	byIP        map[netip.Addr]net.Conn
+	byConn      map[net.Conn]netip.Addr
+	inbound     chan inboundPkt
+	closeSignal chan struct{}
+	shutdown    bool
+	open        bool
+	recvFns     []conn.ReceiveFunc
+	port        uint16
+	ipv6Wait    chan []byte
+}
+
+type inboundPkt struct {
+	data []byte
+	ep   conn.Endpoint
+}
+
+func NewICEBind() *ICEBind {
+	return &ICEBind{
+		byIP:        make(map[netip.Addr]net.Conn),
+		byConn:      make(map[net.Conn]netip.Addr),
+		inbound:     make(chan inboundPkt, 256),
+		ipv6Wait:    make(chan []byte),
+		closeSignal: make(chan struct{}),
+	}
+}
+
+// SetPeerConn attaches an ICE data conn for a peer VPN address.
+func (b *ICEBind) SetPeerConn(vpnIP netip.Addr, c net.Conn) {
+	b.mu.Lock()
+	if b.shutdown {
+		b.mu.Unlock()
+		return
+	}
+	if old, ok := b.byIP[vpnIP]; ok && old != c {
+		delete(b.byConn, old)
+		_ = old.Close()
+	}
+	b.byIP[vpnIP] = c
+	b.byConn[c] = vpnIP
+	b.mu.Unlock()
+	go b.readLoop(vpnIP, c)
+}
+
+func (b *ICEBind) RemovePeer(vpnIP netip.Addr) {
+	b.mu.Lock()
+	if c, ok := b.byIP[vpnIP]; ok {
+		delete(b.byIP, vpnIP)
+		delete(b.byConn, c)
+		_ = c.Close()
+	}
+	b.mu.Unlock()
+}
+
+func (b *ICEBind) readLoop(vpnIP netip.Addr, c net.Conn) {
+	buf := make([]byte, maxWGPacket)
+	ep := &PeerEndpoint{VPNIP: vpnIP}
+	for {
+		n, err := c.Read(buf)
+		if err != nil {
+			return
+		}
+		if n == 0 {
+			continue
+		}
+		pkt := append([]byte(nil), buf[:n]...)
+		b.mu.RLock()
+		shutdown := b.shutdown
+		inbound := b.inbound
+		sig := b.closeSignal
+		b.mu.RUnlock()
+		if shutdown || inbound == nil {
+			return
+		}
+		if sig != nil {
+			select {
+			case <-sig:
+				return
+			default:
+			}
+		}
+		select {
+		case inbound <- inboundPkt{data: pkt, ep: ep}:
+		default:
+			if sig != nil {
+				select {
+				case inbound <- inboundPkt{data: pkt, ep: ep}:
+				case <-sig:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (b *ICEBind) Open(_ uint16) ([]conn.ReceiveFunc, uint16, error) {
+	b.mu.Lock()
+	if b.shutdown {
+		b.mu.Unlock()
+		return nil, 0, net.ErrClosed
+	}
+	if b.open && len(b.recvFns) > 0 {
+		fns := b.recvFns
+		port := b.port
+		b.mu.Unlock()
+		return fns, port, nil
+	}
+	if b.closeSignal == nil {
+		b.closeSignal = make(chan struct{})
+	}
+	if b.inbound == nil {
+		b.inbound = make(chan inboundPkt, 256)
+	}
+	sig := b.closeSignal
+	b.open = true
+	b.mu.Unlock()
+
+	recv4 := func(packets [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
+		select {
+		case <-sig:
+			return 0, net.ErrClosed
+		case pkt, ok := <-b.inbound:
+			if !ok {
+				return 0, net.ErrClosed
+			}
+			if len(packets) == 0 {
+				return 0, errors.New("no buffers")
+			}
+			n := copy(packets[0], pkt.data)
+			sizes[0] = n
+			eps[0] = pkt.ep
+			return 1, nil
+		}
+	}
+	recv6 := func(packets [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
+		select {
+		case <-sig:
+			return 0, net.ErrClosed
+		case <-b.ipv6Wait:
+			return 0, net.ErrClosed
+		}
+	}
+	fns := []conn.ReceiveFunc{recv4, recv6}
+	b.mu.Lock()
+	b.recvFns = fns
+	b.port = defaultWGPort
+	b.mu.Unlock()
+	return fns, defaultWGPort, nil
+}
+
+// Close stops WireGuard receive routines. wireguard-go calls Close then Open on
+// bind updates; ICE peer connections are left intact until Shutdown.
+func (b *ICEBind) Close() error {
+	b.mu.Lock()
+	if b.shutdown {
+		b.mu.Unlock()
+		return nil
+	}
+	sig := b.closeSignal
+	b.closeSignal = nil
+	b.open = false
+	b.recvFns = nil
+	b.mu.Unlock()
+	if sig != nil {
+		select {
+		case <-sig:
+		default:
+			close(sig)
+		}
+	}
+	return nil
+}
+
+// Shutdown tears down peer ICE connections and permanently closes the bind.
+func (b *ICEBind) Shutdown() error {
+	b.mu.Lock()
+	if b.shutdown {
+		b.mu.Unlock()
+		return nil
+	}
+	b.shutdown = true
+	b.open = false
+	sig := b.closeSignal
+	b.closeSignal = nil
+	inbound := b.inbound
+	b.inbound = nil
+	b.recvFns = nil
+	conns := make([]net.Conn, 0, len(b.byIP))
+	for _, c := range b.byIP {
+		conns = append(conns, c)
+	}
+	b.byIP = make(map[netip.Addr]net.Conn)
+	b.byConn = make(map[net.Conn]netip.Addr)
+	b.mu.Unlock()
+
+	for _, c := range conns {
+		_ = c.Close()
+	}
+	if sig != nil {
+		select {
+		case <-sig:
+		default:
+			close(sig)
+		}
+	}
+	if inbound != nil {
+		close(inbound)
+	}
+	return nil
+}
+
+func (b *ICEBind) SetMark(_ uint32) error { return nil }
+
+func (b *ICEBind) Send(bufs [][]byte, ep conn.Endpoint) error {
+	pe, ok := ep.(*PeerEndpoint)
+	if !ok {
+		return conn.ErrWrongEndpointType
+	}
+	b.mu.RLock()
+	shutdown := b.shutdown
+	c, hasConn := b.byIP[pe.VPNIP]
+	b.mu.RUnlock()
+	if shutdown {
+		return net.ErrClosed
+	}
+	if !hasConn || c == nil {
+		// No ICE path yet (peer not connected); drop silently during bring-up.
+		return nil
+	}
+	for _, buf := range bufs {
+		if len(buf) > maxWGPacket {
+			return fmt.Errorf("packet too large: %d", len(buf))
+		}
+		if _, err := c.Write(buf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *ICEBind) ParseEndpoint(s string) (conn.Endpoint, error) {
+	ap, err := netip.ParseAddrPort(s)
+	if err != nil {
+		return nil, err
+	}
+	return &PeerEndpoint{VPNIP: ap.Addr()}, nil
+}
+
+func (b *ICEBind) BatchSize() int { return 1 }
+
+// DuplexPair creates two binds each with one peer conn over net.Pipe halves.
+func DuplexPair(localIP, remoteIP netip.Addr) (local *ICEBind, remote *ICEBind, cleanup func()) {
+	a, b := net.Pipe()
+	local = NewICEBind()
+	remote = NewICEBind()
+	local.SetPeerConn(remoteIP, a)
+	remote.SetPeerConn(localIP, b)
+	return local, remote, func() {
+		_ = local.Shutdown()
+		_ = remote.Shutdown()
+	}
+}
+
+// DuplexPairUDP uses loopback UDP (closer to ICE than net.Pipe for WireGuard tests).
+func DuplexPairUDP(localIP, remoteIP netip.Addr) (local *ICEBind, remote *ICEBind, cleanup func()) {
+	a, b, closeUDP := udpPair()
+	local = NewICEBind()
+	remote = NewICEBind()
+	local.SetPeerConn(remoteIP, a)
+	remote.SetPeerConn(localIP, b)
+	return local, remote, func() {
+		_ = local.Shutdown()
+		_ = remote.Shutdown()
+		closeUDP()
+	}
+}
