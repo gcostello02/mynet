@@ -84,11 +84,13 @@ func (b *ICEBind) SetPeerConn(vpnIP netip.Addr, c net.Conn) {
 	}
 	var ctr *peerCounters
 	if old, ok := b.byIP[vpnIP]; ok {
-		ctr = old.counters
-		if old.conn != c {
-			delete(b.byConn, old.conn)
-			_ = old.conn.Close()
+		if old.conn == c {
+			b.mu.Unlock()
+			return
 		}
+		ctr = old.counters
+		delete(b.byConn, old.conn)
+		_ = old.conn.Close()
 	} else {
 		ctr = &peerCounters{}
 	}

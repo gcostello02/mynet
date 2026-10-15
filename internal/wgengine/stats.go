@@ -82,7 +82,7 @@ func parsePeerStats(uapi string) ([]PeerStats, error) {
 		case "last_handshake_time_nsec":
 			if cur != nil {
 				nsec, _ := parseUint64(val)
-				cur.LastHandshake = cur.LastHandshake.Add(time.Duration(int64(nsec)))
+				cur.LastHandshake = time.Unix(cur.LastHandshake.Unix(), int64(nsec))
 			}
 		case "tx_bytes":
 			if cur != nil {

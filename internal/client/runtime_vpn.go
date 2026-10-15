@@ -119,6 +119,9 @@ func (r *Runtime) storePeerLink(peerName, sessionID string, conn net.Conn, path 
 	if r.peerLinks == nil {
 		r.peerLinks = make(map[string]*PeerLink)
 	}
+	if prev, ok := r.peerLinks[peerName]; ok && prev.Conn != nil && prev.Conn != conn {
+		_ = prev.Conn.Close()
+	}
 	r.peerLinks[peerName] = &PeerLink{
 		PeerName:  peerName,
 		Conn:      conn,
