@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http/httptest"
 	"os"
@@ -55,7 +56,14 @@ func TestRuntimeP2POverServer(t *testing.T) {
 	if err := rtB.Login("e2e-enroll"); err != nil {
 		t.Fatal(err)
 	}
-	if err := rtB.ensureWebSocket(); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rtA.StartSignaling(ctx)
+	rtB.StartSignaling(ctx)
+	if err := rtA.WaitForSignaling(context.Background(), 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := rtB.WaitForSignaling(context.Background(), 5*time.Second); err != nil {
 		t.Fatal(err)
 	}
 

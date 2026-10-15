@@ -10,7 +10,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/grantcostello/mynet/internal/client"
 	"github.com/grantcostello/mynet/internal/config"
+	"github.com/grantcostello/mynet/internal/control"
 )
 
 // SocketPath returns the Unix socket for CLI ↔ daemon IPC.
@@ -24,13 +26,16 @@ func PIDPath(stateDir string) string {
 
 type Request struct {
 	Method string `json:"method"`
+	Peer   string `json:"peer,omitempty"`
 }
 
 type Response struct {
-	OK        bool               `json:"ok"`
-	Error     string             `json:"error,omitempty"`
-	Status    *Status            `json:"status,omitempty"`
-	Preflight *PreflightResponse `json:"preflight,omitempty"`
+	OK          bool                `json:"ok"`
+	Error       string              `json:"error,omitempty"`
+	Status      *Status             `json:"status,omitempty"`
+	Preflight   *PreflightResponse  `json:"preflight,omitempty"`
+	Diagnostics *client.Diagnostics `json:"diagnostics,omitempty"`
+	Peers       []control.PeerInfo  `json:"peers,omitempty"`
 }
 
 type PreflightResponse struct {
@@ -74,13 +79,18 @@ func writeResp(c net.Conn, resp Response) {
 
 // CallIPC sends a one-shot request to the daemon.
 func CallIPC(stateDir string, method string) (Response, error) {
+	return CallIPCWithPeer(stateDir, method, "")
+}
+
+// CallIPCWithPeer sends a daemon request with an optional peer name (diagnose).
+func CallIPCWithPeer(stateDir string, method, peer string) (Response, error) {
 	path := SocketPath(stateDir)
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		return Response{}, err
 	}
 	defer conn.Close()
-	if err := json.NewEncoder(conn).Encode(Request{Method: method}); err != nil {
+	if err := json.NewEncoder(conn).Encode(Request{Method: method, Peer: peer}); err != nil {
 		return Response{}, err
 	}
 	var resp Response

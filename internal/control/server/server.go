@@ -344,12 +344,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(maxWSMsgBytes)
-	_ = s.hub.Register(deviceID, conn)
-	s.log.Info("device online", "device_id", deviceID)
+	connID := s.hub.Register(deviceID, conn)
+	s.log.Info("device online", "device_id", deviceID, "conn_id", connID)
 	defer func() {
-		s.hub.Unregister(deviceID)
+		s.hub.Unregister(deviceID, connID)
 		_ = conn.Close()
-		s.log.Info("device offline", "device_id", deviceID)
+		s.log.Info("device offline", "device_id", deviceID, "conn_id", connID)
 	}()
 
 	for {

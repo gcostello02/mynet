@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/grantcostello/mynet/internal/client"
 	"github.com/grantcostello/mynet/internal/config"
@@ -24,16 +25,17 @@ type Node struct {
 	StateDir string
 	Logger   *slog.Logger
 
-	mu         sync.Mutex
-	running    bool
-	rt         *client.Runtime
-	engine     *wgengine.Engine
-	bind       *wgbind.ICEBind
-	tunMgr     *tundev.Manager
-	tunName    string
-	vpnIP      netip.Addr
-	peers      map[string]PeerStatus
-	peerCancel context.CancelFunc
+	mu              sync.Mutex
+	running         bool
+	rt              *client.Runtime
+	engine          *wgengine.Engine
+	bind            *wgbind.ICEBind
+	tunMgr          *tundev.Manager
+	tunName         string
+	vpnIP           netip.Addr
+	peers           map[string]PeerStatus
+	peerCancel      context.CancelFunc
+	signalingCancel context.CancelFunc
 }
 
 type PeerStatus struct {
@@ -119,6 +121,15 @@ func (n *Node) Up(ctx context.Context) error {
 	rt.SetVPNMode(true)
 	if err := rt.Login(""); err != nil {
 		return fmt.Errorf("login: %w", err)
+	}
+	sigCtx, sigCancel := context.WithCancel(context.Background())
+	n.mu.Lock()
+	n.signalingCancel = sigCancel
+	n.mu.Unlock()
+	rt.StartSignaling(sigCtx)
+	if err := rt.WaitForSignaling(ctx, 30*time.Second); err != nil {
+		sigCancel()
+		return fmt.Errorf("signaling: %w", err)
 	}
 	if _, err := rt.RegisterVPN(); err != nil {
 		return err
@@ -214,11 +225,13 @@ func (n *Node) Down() error {
 		return nil
 	}
 	peerCancel := n.peerCancel
+	sigCancel := n.signalingCancel
 	engine := n.engine
 	rt := n.rt
 	tunMgr := n.tunMgr
 	tunName := n.tunName
 	n.peerCancel = nil
+	n.signalingCancel = nil
 	n.running = false
 	n.engine = nil
 	n.rt = nil
@@ -231,6 +244,9 @@ func (n *Node) Down() error {
 
 	if peerCancel != nil {
 		peerCancel()
+	}
+	if sigCancel != nil {
+		sigCancel()
 	}
 	if engine != nil {
 		_ = engine.Close()
@@ -247,12 +263,15 @@ func (n *Node) Down() error {
 
 // Status snapshot for CLI.
 type Status struct {
-	DeviceName string
-	VPNIP      string
-	Interface  string
-	Signaling  string
-	WireGuard  string
-	Peers      []PeerStatus
+	DeviceName         string
+	VPNIP              string
+	Interface          string
+	Signaling          string
+	SignalingReconnect int
+	SignalingLastError string
+	SignalingLastMsg   string
+	WireGuard          string
+	Peers              []PeerStatus
 }
 
 func (n *Node) Status() Status {
@@ -272,6 +291,12 @@ func (n *Node) Status() Status {
 		s, _ := n.rt.Status()
 		st.DeviceName = s.DeviceName
 		st.Signaling = s.Signaling
+		if s.LastError != "" && st.Signaling != "Connected" {
+			st.SignalingLastError = s.LastError
+		}
+		snap := n.rt.SignalingSnapshot()
+		st.SignalingReconnect = snap.ReconnectAttempts
+		st.SignalingLastMsg = snap.LastMessageType
 	}
 	for _, p := range n.peers {
 		st.Peers = append(st.Peers, p)

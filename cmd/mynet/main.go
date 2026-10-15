@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/grantcostello/mynet/internal/client"
 	"github.com/grantcostello/mynet/internal/config"
+	"github.com/grantcostello/mynet/internal/control"
 	"github.com/grantcostello/mynet/internal/daemon"
 )
 
@@ -65,31 +67,30 @@ func main() {
 		if err := rt.Login(secret); err != nil {
 			fatal(err)
 		}
-		fmt.Println("Logged in and connected to signaling.")
+		fmt.Println("Logged in (session saved).")
 		if *stay {
 			fmt.Println("Staying online for signaling (Ctrl+C to exit).")
+			ctx, cancel := context.WithCancel(context.Background())
+			rt.StartSignaling(ctx)
 			ch := make(chan os.Signal, 1)
 			signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 			<-ch
+			cancel()
 			_ = rt.Down()
 		}
 	case "peers":
+		if daemon.DaemonReachable(stateDir()) {
+			resp, err := daemon.CallIPC(stateDir(), "peers")
+			if err == nil && resp.OK {
+				printPeerList(resp.Peers)
+				return
+			}
+		}
 		peers, err := rt.Peers()
 		if err != nil {
 			fatal(err)
 		}
-		if len(peers) == 0 {
-			fmt.Println("No peers in network.")
-			return
-		}
-		fmt.Println("PEERS")
-		for _, p := range peers {
-			status := "offline"
-			if p.Online {
-				status = "online"
-			}
-			fmt.Printf("  %-20s %s  %s\n", p.Name, p.DeviceID[:8]+"…", status)
-		}
+		printPeerList(peers)
 	case "connect":
 		fs := flag.NewFlagSet("connect", flag.ExitOnError)
 		peer := fs.String("peer", "", "peer device name")
@@ -151,6 +152,13 @@ func main() {
 		fs := flag.NewFlagSet("diagnose", flag.ExitOnError)
 		peer := fs.String("peer", "", "peer device name")
 		_ = fs.Parse(os.Args[2:])
+		if daemon.DaemonReachable(stateDir()) {
+			resp, err := daemon.CallIPCWithPeer(stateDir(), "diagnose", *peer)
+			if err == nil && resp.OK && resp.Diagnostics != nil {
+				printDiagnostics(*resp.Diagnostics)
+				return
+			}
+		}
 		d, err := rt.Diagnose(*peer)
 		if err != nil {
 			fatal(err)
@@ -284,6 +292,21 @@ func printStatus(st client.Status) {
 	fmt.Printf("Server:     %s\n", st.ServerURL)
 }
 
+func printPeerList(peers []control.PeerInfo) {
+	if len(peers) == 0 {
+		fmt.Println("No peers in network.")
+		return
+	}
+	fmt.Println("PEERS")
+	for _, p := range peers {
+		status := "offline"
+		if p.Online {
+			status = "online"
+		}
+		fmt.Printf("  %-20s %s  %s\n", p.Name, p.DeviceID[:8]+"…", status)
+	}
+}
+
 func printDiagnostics(d client.Diagnostics) {
 	fmt.Println("MyNet — Connection Diagnostics")
 	fmt.Println()
@@ -299,6 +322,15 @@ func printDiagnostics(d client.Diagnostics) {
 	}
 	fmt.Printf("  Authentication: %s\n", d.Authentication)
 	fmt.Printf("  Signaling:      %s\n", d.Signaling)
+	if d.SignalingReconnect > 0 {
+		fmt.Printf("  Reconnects:     %d\n", d.SignalingReconnect)
+	}
+	if d.SignalingLastMsg != "" {
+		fmt.Printf("  Last WS msg:    %s\n", d.SignalingLastMsg)
+	}
+	if d.WireGuardState != "" {
+		fmt.Printf("  WireGuard:      %s\n", d.WireGuardState)
+	}
 	if d.PeerName != "" {
 		fmt.Printf("  Peer online:    %v\n", d.PeerOnline)
 	}
