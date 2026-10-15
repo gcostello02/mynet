@@ -58,8 +58,11 @@ type Runtime struct {
 	lastRemoteCandidates []icepkg.CandidateInfo
 	connectOpts          ConnectOptions
 
-	connectWait chan error // initiator waits for ICE result
-	iceCancel   context.CancelFunc
+	connectWait  chan error // initiator waits for ICE result
+	iceCancel    context.CancelFunc
+	iceCancelFor string
+
+	incomingICE map[string]bool
 
 	signalMu       sync.Mutex
 	signalHandlers map[string]func(control.WSMessage)
@@ -99,6 +102,7 @@ func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
 		connState:      StateDisconnected,
 		signalHandlers: make(map[string]func(control.WSMessage)),
 		pendingSignals: make(map[string][]control.WSMessage),
+		incomingICE:    make(map[string]bool),
 	}
 }
 
@@ -291,7 +295,14 @@ func (r *Runtime) ConnectWithOptions(peerName string, opts ConnectOptions) error
 			return errors.New("relay-only requires TURN (server MYNET_TURN_* or client turn_urls); run mynet login after server TURN is configured")
 		}
 	}
-	if err := r.ensureWebSocket(); err != nil {
+	r.signalingMu.Lock()
+	sigLoop := r.signalingRunning
+	r.signalingMu.Unlock()
+	if sigLoop {
+		if err := r.WaitForSignaling(context.Background(), 15*time.Second); err != nil {
+			return err
+		}
+	} else if err := r.ensureWebSocket(); err != nil {
 		return err
 	}
 	waitCh := make(chan error, 1)
@@ -326,15 +337,29 @@ func (r *Runtime) ConnectWithOptions(peerName string, opts ConnectOptions) error
 }
 
 func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
+	iceTrace("session_ready", map[string]string{
+		"session_id": ready.SessionID,
+		"peer":       ready.PeerName,
+		"role":       ready.Role,
+	})
 	r.mu.Lock()
-	if r.activeSession == ready.SessionID && (r.connState == StateConnecting || r.connState == StateConnected) {
+	if r.incomingICE[ready.SessionID] {
 		r.mu.Unlock()
+		iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "already_handling"})
+		return
+	}
+	r.incomingICE[ready.SessionID] = true
+	if r.activeSession == ready.SessionID && (r.connState == StateConnecting || r.connState == StateConnected) {
+		delete(r.incomingICE, ready.SessionID)
+		r.mu.Unlock()
+		iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "already_active"})
 		return
 	}
 	if r.activeSession != "" && r.activeSession != ready.SessionID {
 		if r.iceCancel != nil {
 			r.iceCancel()
 			r.iceCancel = nil
+			r.iceCancelFor = ""
 		}
 		if r.dataConn != nil {
 			_ = r.dataConn.Close()
@@ -353,6 +378,11 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 	r.mu.Lock()
 	opts := r.connectOpts
 	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		delete(r.incomingICE, ready.SessionID)
+		r.mu.Unlock()
+	}()
 	conn, path, err := r.runICESession(ready.SessionID, ready.PeerName, controlling, opts)
 	if err != nil {
 		r.Logger.Error("ICE session failed", "session", ready.SessionID, "controlling", controlling, "err", err)
@@ -397,6 +427,11 @@ type signalState struct {
 }
 
 func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, opts ConnectOptions) (net.Conn, icepkg.PathInfo, error) {
+	iceTrace("ice_begin", map[string]string{
+		"session_id":  sessionID,
+		"peer":        peerName,
+		"controlling": boolString(controlling),
+	})
 	if err := r.ensureWebSocket(); err != nil {
 		return nil, icepkg.PathInfo{}, err
 	}
@@ -501,17 +536,22 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	sig.mu.Lock()
 	if !sig.remoteCredReady {
 		sig.mu.Unlock()
+		iceTrace("ice_remote_credentials_timeout", map[string]string{"session_id": sessionID})
 		return nil, icepkg.PathInfo{}, errors.New("timed out waiting for peer ICE credentials")
 	}
 	remoteUfrag, remotePwd := sig.remoteUfrag, sig.remotePwd
 	sig.mu.Unlock()
+	iceTrace("ice_remote_credentials_ready", map[string]string{"session_id": sessionID})
 
 	if err := sess.Gather(); err != nil {
 		return nil, icepkg.PathInfo{}, err
 	}
+	iceTrace("ice_gather_started", map[string]string{"session_id": sessionID})
 	if err := waitGatherComplete(sig, 8*time.Second); err != nil {
+		iceTrace("ice_gather_timeout", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 		return nil, icepkg.PathInfo{}, err
 	}
+	iceTrace("ice_gather_complete", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 	loc, err := sess.LocalCandidates()
 	if err == nil {
 		r.mu.Lock()
@@ -533,17 +573,37 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 
 	iceCtx, iceCancel := context.WithTimeout(context.Background(), icepkg.ConnectTimeout)
 	r.mu.Lock()
-	if r.iceCancel != nil {
+	if r.iceCancel != nil && r.iceCancelFor != sessionID {
 		r.iceCancel()
 	}
 	r.iceCancel = iceCancel
+	r.iceCancelFor = sessionID
 	r.mu.Unlock()
-	defer iceCancel()
+	defer func() {
+		iceCancel()
+		r.mu.Lock()
+		if r.iceCancelFor == sessionID {
+			r.iceCancel = nil
+			r.iceCancelFor = ""
+		}
+		r.mu.Unlock()
+	}()
 
+	iceTrace("ice_connect_start", map[string]string{
+		"session_id":  sessionID,
+		"agent_state": sess.AgentState(),
+		"controlling": boolString(controlling),
+	})
 	conn, err := sess.Connect(iceCtx, remoteUfrag, remotePwd)
 	if err != nil {
+		iceTrace("ice_connect_failed", map[string]string{
+			"session_id":  sessionID,
+			"agent_state": sess.AgentState(),
+			"err":         err.Error(),
+		})
 		return nil, icepkg.PathInfo{}, fmt.Errorf("ICE failed: %w", err)
 	}
+	iceTrace("ice_connect_ok", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 	path := sess.Path()
 
 	r.mu.Lock()
@@ -707,6 +767,13 @@ func waitGatherComplete(sig *signalState, timeout time.Duration) error {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return errors.New("local ICE gathering did not complete")
+}
+
+func boolString(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }
 
 func (r *Runtime) dispatchSignal(msg control.WSMessage) {
