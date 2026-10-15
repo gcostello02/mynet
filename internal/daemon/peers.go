@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"math/rand"
-	"net"
+	"net/netip"
 	"time"
 
 	"github.com/gcostello02/mynet/internal/client"
 	"github.com/gcostello02/mynet/internal/control"
-	"net/netip"
+	icepkg "github.com/gcostello02/mynet/internal/ice"
 )
 
 const (
@@ -21,7 +21,7 @@ const (
 
 func (n *Node) startPeerWorkers(ctx context.Context, rt *client.Runtime, selfID string, peers []control.VPNPeerConfig) {
 	for _, p := range peers {
-		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStatePending, "", false)
+		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStatePending, icepkg.PathInfo{}, "")
 		go n.runPeerWorker(ctx, rt, selfID, p)
 	}
 }
@@ -37,7 +37,7 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 		if !n.VPNActive() {
 			return
 		}
-		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateConnecting, "", false)
+		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateConnecting, icepkg.PathInfo{}, "")
 		link, err := n.tryPeerICE(ctx, rt, selfID, p)
 		if err == nil && link != nil {
 			n.mu.Lock()
@@ -46,14 +46,24 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 			if bind != nil {
 				bind.SetPeerConn(peerIP, link.Conn)
 			}
-			n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateTransport, link.Path.Connection, link.Path.TURNUsed)
+			n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateTransport, link.Path, link.SessionID)
 			backoff = time.Second
-			if !waitPeerConn(ctx, link.Conn) {
+			if bind == nil {
+				select {
+				case <-ctx.Done():
+					return
+				}
+			} else if !bind.WaitPeerTransport(ctx, peerIP) {
 				return
 			}
+			rt.ClearPeerLink(p.Name, link.Conn)
+			if bind != nil {
+				bind.RemovePeer(peerIP)
+			}
+			n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateConnecting, icepkg.PathInfo{}, "")
 			continue
 		}
-		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateWaiting, peerErrString(err), false)
+		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateWaiting, icepkg.PathInfo{}, "")
 		jitter := time.Duration(rand.Int63n(int64(backoff / 2)))
 		sleep := backoff + jitter
 		if sleep > maxBackoff {
@@ -70,26 +80,8 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 	}
 }
 
-// waitPeerConn blocks until the ICE conn closes or ctx is cancelled. Returns false on shutdown.
-func waitPeerConn(ctx context.Context, c net.Conn) bool {
-	buf := make([]byte, 1)
-	for {
-		if ctx.Err() != nil {
-			return false
-		}
-		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
-		_, err := c.Read(buf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			return true
-		}
-	}
-}
-
 func (n *Node) tryPeerICE(ctx context.Context, rt *client.Runtime, selfID string, p control.VPNPeerConfig) (*client.PeerLink, error) {
-	if l, ok := rt.PeerLink(p.Name); ok {
+	if l, ok := rt.PeerLink(p.Name); ok && l.Conn != nil {
 		return l, nil
 	}
 	if shouldInitiateICE(selfID, p.DeviceID) {
@@ -102,7 +94,7 @@ func (n *Node) tryPeerICE(ctx context.Context, rt *client.Runtime, selfID string
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if l, ok := rt.PeerLink(p.Name); ok {
+		if l, ok := rt.PeerLink(p.Name); ok && l.Conn != nil {
 			return l, nil
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -120,18 +112,24 @@ func peerErrString(err error) string {
 	return err.Error()
 }
 
-func (n *Node) setPeerStatus(name, vpnIP, wgKey, state, transport string, turn bool) {
+func (n *Node) setPeerStatus(name, vpnIP, wgKey, state string, path icepkg.PathInfo, sessionID string) {
 	n.mu.Lock()
 	if n.peers == nil {
 		n.peers = make(map[string]PeerStatus)
 	}
 	n.peers[name] = PeerStatus{
-		Name:        name,
-		VPNIP:       vpnIP,
-		State:       state,
-		Transport:   transport,
-		TURNUsed:    turn,
-		WGPublicKey: wgKey,
+		Name:          name,
+		VPNIP:         vpnIP,
+		State:         state,
+		Transport:     path.Connection,
+		TURNUsed:      path.TURNUsed,
+		LocalType:     path.LocalType,
+		RemoteType:    path.RemoteType,
+		LocalAddr:     path.LocalAddr,
+		RemoteAddr:    path.RemoteAddr,
+		ICESessionID:  sessionID,
+		ICEConnState:  path.ConnectionState,
+		WGPublicKey:   wgKey,
 	}
 	n.mu.Unlock()
 }

@@ -140,3 +140,12 @@ func (r *Runtime) failPeerVPN(peerName string, err error) {
 		ch <- err
 	}
 }
+
+// ClearPeerLink removes a cached VPN ICE link after its transport closes.
+func (r *Runtime) ClearPeerLink(peerName string, conn net.Conn) {
+	r.mu.Lock()
+	if l, ok := r.peerLinks[peerName]; ok && (conn == nil || l.Conn == conn) {
+		delete(r.peerLinks, peerName)
+	}
+	r.mu.Unlock()
+}

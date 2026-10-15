@@ -39,12 +39,18 @@ type Node struct {
 }
 
 type PeerStatus struct {
-	Name        string
-	VPNIP       string
-	Transport   string
-	State       string
-	TURNUsed    bool
-	WGPublicKey string
+	Name         string
+	VPNIP        string
+	Transport    string
+	State        string
+	TURNUsed     bool
+	LocalType    string
+	RemoteType   string
+	LocalAddr    string
+	RemoteAddr   string
+	ICESessionID string
+	ICEConnState string
+	WGPublicKey  string
 }
 
 // Preflight returns planned network changes without applying them.
