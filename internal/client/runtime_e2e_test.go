@@ -31,11 +31,6 @@ func TestRuntimeP2POverServer(t *testing.T) {
 	dirB := t.TempDir()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	SetICETraceHook(func(stage string, detail map[string]string) {
-		t.Logf("ice stage=%s %v", stage, detail)
-	})
-	defer SetICETraceHook(nil)
-
 	rtA := NewRuntime(dirA, log)
 	rtB := NewRuntime(dirB, log)
 	if err := rtA.Init("alpha"); err != nil {
@@ -67,7 +62,15 @@ func TestRuntimeP2POverServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(func() {
+		cancel()
+		_ = rtA.Down()
+		_ = rtB.Down()
+		SetICETraceHook(nil)
+	})
+	SetICETraceHook(func(stage string, detail map[string]string) {
+		t.Logf("ice stage=%s %v", stage, detail)
+	})
 	rtA.StartSignaling(ctx)
 	rtB.StartSignaling(ctx)
 
