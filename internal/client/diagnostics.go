@@ -31,6 +31,9 @@ type Diagnostics struct {
 	RemoteAddr         string
 	RTT                time.Duration
 	LastComm           string
+	SignalingReconnect int
+	SignalingLastMsg   string
+	WireGuardState     string
 	LocalCandidates    []icepkg.CandidateInfo
 	RemoteCandidates   []icepkg.CandidateInfo
 	TailscaleSignaling string // No | Yes | Unverified
@@ -60,13 +63,18 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.Authentication = "Valid (session token present)"
 	r.refreshICEServers()
 
-	// Refresh signaling state without leaving a stray connection if peers/connect will manage WS.
-	if err := r.ensureWebSocket(); err != nil {
-		d.Warnings = append(d.Warnings, "signaling websocket: "+err.Error())
+	snap := r.SignalingSnapshot()
+	d.Signaling = snap.State
+	d.SignalingReconnect = snap.ReconnectAttempts
+	d.SignalingLastMsg = snap.LastMessageType
+	if snap.LastDisconnectReason != "" && snap.State != "Connected" {
+		d.Warnings = append(d.Warnings, "signaling: "+snap.LastDisconnectReason)
+	}
+	if !snap.LastMessageAt.IsZero() && d.LastComm == "" {
+		d.LastComm = snap.LastMessageAt.UTC().Format(time.RFC3339)
 	}
 
 	r.mu.Lock()
-	wsUp := r.ws != nil
 	d.ICEState = r.icePath.ConnectionState
 	if d.ICEState == "" {
 		d.ICEState = "idle"
@@ -85,12 +93,6 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 		d.LastComm = r.lastPingAt.UTC().Format(time.RFC3339)
 	}
 	r.mu.Unlock()
-
-	if wsUp {
-		d.Signaling = "Connected"
-	} else {
-		d.Signaling = "Disconnected"
-	}
 
 	d.Warnings = append(d.Warnings, r.independentWarnings()...)
 

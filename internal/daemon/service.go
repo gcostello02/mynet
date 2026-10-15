@@ -91,6 +91,24 @@ func (s *Service) handleConn(c net.Conn) {
 	case "status":
 		st := s.Node.Status()
 		writeResp(c, Response{OK: true, Status: &st})
+	case "diagnose":
+		peer := ""
+		if req.Peer != "" {
+			peer = req.Peer
+		}
+		d, err := s.Node.Diagnose(peer)
+		if err != nil {
+			writeResp(c, Response{OK: false, Error: err.Error()})
+			return
+		}
+		writeResp(c, Response{OK: true, Diagnostics: &d})
+	case "peers":
+		peers, err := s.Node.PeersList()
+		if err != nil {
+			writeResp(c, Response{OK: false, Error: err.Error()})
+			return
+		}
+		writeResp(c, Response{OK: true, Peers: peers})
 	case "quit":
 		writeResp(c, Response{OK: true})
 		s.scheduleStop()

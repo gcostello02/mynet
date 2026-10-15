@@ -53,7 +53,7 @@ func (r *Runtime) ConnectPeerVPNContext(ctx context.Context, peerName string) (*
 		return l, nil
 	}
 	r.SetVPNMode(true)
-	if err := r.ensureWebSocket(); err != nil {
+	if err := r.waitForSignaling(ctx); err != nil {
 		return nil, err
 	}
 	r.mu.Lock()

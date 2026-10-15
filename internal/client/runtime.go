@@ -71,6 +71,14 @@ type Runtime struct {
 	peerLinks     map[string]*PeerLink
 	vpnWait       map[string]chan error
 	vpnConnecting map[string]bool
+
+	signalingMu         sync.Mutex
+	signalingRunning    bool
+	signalingConnecting bool
+	lastWSDisconnect    string
+	reconnectAttempts   int
+	lastWSMessageType   string
+	lastWSMessageAt     time.Time
 }
 
 // APIClient returns the coordination HTTP client (session token if logged in).
@@ -164,7 +172,7 @@ func (r *Runtime) Login(enrollmentSecret string) error {
 	r.connState = StateRegistered
 	r.mu.Unlock()
 	r.refreshICEServers()
-	return r.ensureWebSocket()
+	return nil
 }
 
 func (r *Runtime) refreshICEServers() {
@@ -182,7 +190,15 @@ func (r *Runtime) iceServersForSession() []control.ICEServer {
 	return config.BuildICEServers(r.cfg, r.serverICE)
 }
 
+// ensureWebSocket connects signaling for short-lived CLI use when no persistent loop runs.
+// VPN daemon code should use StartSignaling instead.
 func (r *Runtime) ensureWebSocket() error {
+	r.signalingMu.Lock()
+	running := r.signalingRunning
+	r.signalingMu.Unlock()
+	if running {
+		return r.waitForSignaling(context.Background())
+	}
 	r.mu.Lock()
 	if r.ws != nil {
 		r.mu.Unlock()
@@ -199,7 +215,6 @@ func (r *Runtime) ensureWebSocket() error {
 	r.wsCancel = cancel
 	r.connState = StateOnline
 	r.mu.Unlock()
-
 	go r.wsReadLoop(ctx, conn)
 	return nil
 }
@@ -228,6 +243,7 @@ func (r *Runtime) wsReadLoop(ctx context.Context, conn *websocket.Conn) {
 		if err := json.Unmarshal(data, &msg); err != nil {
 			continue
 		}
+		r.noteWSMessage(msg.Type)
 		r.Logger.Debug("ws recv", "type", msg.Type, "session_id", msg.SessionID)
 		switch msg.Type {
 		case control.SignalSessionReady:
@@ -252,9 +268,6 @@ func (r *Runtime) Peers() ([]control.PeerInfo, error) {
 	}
 	if r.api.Token == "" {
 		return nil, errors.New("not logged in; run mynet login")
-	}
-	if err := r.ensureWebSocket(); err != nil {
-		r.Logger.Warn("websocket unavailable", "err", err)
 	}
 	return r.api.Peers()
 }
@@ -633,10 +646,12 @@ func (r *Runtime) Status() (Status, error) {
 		ServerURL:  r.cfg.ServerURL,
 		Signaling:  "Disconnected",
 	}
-	if r.ws != nil {
-		st.Signaling = "Connected"
-	}
+	snap := r.signalingSnapshotLocked()
 	r.mu.Unlock()
+	st.Signaling = snap.State
+	if st.Signaling == "Disconnected" && snap.LastDisconnectReason != "" {
+		st.LastError = snap.LastDisconnectReason
+	}
 	if st.State == StateDisconnected && r.api != nil && r.api.Token != "" {
 		st.State = StateRegistered
 	}

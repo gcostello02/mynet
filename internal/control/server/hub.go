@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 	"github.com/gcostello02/mynet/internal/control"
 )
 
 type wsClient struct {
+	id       uint64
 	deviceID string
 	conn     *websocket.Conn
 	send     chan []byte
@@ -20,6 +22,7 @@ type Hub struct {
 	mu      sync.RWMutex
 	clients map[string]*wsClient
 	log     *slog.Logger
+	nextID  atomic.Uint64
 }
 
 func NewHub(log *slog.Logger) *Hub {
@@ -29,8 +32,12 @@ func NewHub(log *slog.Logger) *Hub {
 	}
 }
 
-func (h *Hub) Register(deviceID string, conn *websocket.Conn) *wsClient {
+// Register adds a signaling connection for deviceID, replacing any prior connection.
+// Returns a connection id used for safe Unregister on close.
+func (h *Hub) Register(deviceID string, conn *websocket.Conn) uint64 {
+	id := h.nextID.Add(1)
 	c := &wsClient{
+		id:       id,
 		deviceID: deviceID,
 		conn:     conn,
 		send:     make(chan []byte, 32),
@@ -44,12 +51,14 @@ func (h *Hub) Register(deviceID string, conn *websocket.Conn) *wsClient {
 	h.mu.Unlock()
 
 	go h.writePump(c)
-	return c
+	return id
 }
 
-func (h *Hub) Unregister(deviceID string) {
+// Unregister removes presence only if connID is still the active connection for deviceID.
+func (h *Hub) Unregister(deviceID string, connID uint64) {
 	h.mu.Lock()
-	if c, ok := h.clients[deviceID]; ok {
+	c, ok := h.clients[deviceID]
+	if ok && c.id == connID {
 		close(c.send)
 		delete(h.clients, deviceID)
 	}

@@ -214,6 +214,15 @@ func printVPNStatus(st daemon.Status) {
 	fmt.Printf("Interface: %s\n", st.Interface)
 	fmt.Println()
 	fmt.Printf("Coordination: %s\n", st.Signaling)
+	if st.SignalingLastError != "" {
+		fmt.Printf("  Last error: %s\n", st.SignalingLastError)
+	}
+	if st.SignalingReconnect > 0 {
+		fmt.Printf("  Reconnects: %d\n", st.SignalingReconnect)
+	}
+	if st.SignalingLastMsg != "" {
+		fmt.Printf("  Last WS msg: %s\n", st.SignalingLastMsg)
+	}
 	fmt.Printf("WireGuard: %s\n", st.WireGuard)
 	if len(st.Peers) > 0 {
 		fmt.Println()
