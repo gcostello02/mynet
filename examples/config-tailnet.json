@@ -1,0 +1,5 @@
+{
+  "server_url": "http://100.x.x.x:8787",
+  "allow_tailscale_candidates": true,
+  "stun_urls": ["stun:stun.l.google.com:19302"]
+}
