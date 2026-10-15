@@ -32,7 +32,7 @@ type Plan struct {
 // BuildPlan returns intended interface and routes for preflight.
 func BuildPlan(local netip.Prefix, peers []netip.Addr) Plan {
 	p := Plan{
-		TUNName:     "mynet0 (OS may assign utunN on macOS)",
+		TUNName:     plannedTUNDescription(),
 		LocalPrefix: local.String(),
 	}
 	for _, peer := range peers {
