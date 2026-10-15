@@ -55,13 +55,19 @@ func (e *Engine) Close() error {
 	return nil
 }
 
-// SetPeer configures or updates a WireGuard peer.
-func (e *Engine) SetPeer(publicKeyHex string, vpnIP netip.Addr, allowedCIDR string) error {
+// SetPeer configures or updates a WireGuard peer (UAPI key is allowed_ip, not allowed_ips).
+func (e *Engine) SetPeer(publicKeyHex string, vpnIP netip.Addr, allowedCIDRs ...string) error {
+	if len(allowedCIDRs) == 0 {
+		return fmt.Errorf("at least one allowed_ip CIDR required")
+	}
 	ep := fmt.Sprintf("%s:%d", vpnIP, 51820)
 	var cfg bytes.Buffer
 	fmt.Fprintf(&cfg, "public_key=%s\n", publicKeyHex)
+	fmt.Fprintf(&cfg, "replace_allowed_ips=true\n")
 	fmt.Fprintf(&cfg, "endpoint=%s\n", ep)
-	fmt.Fprintf(&cfg, "allowed_ips=%s\n", allowedCIDR)
+	for _, cidr := range allowedCIDRs {
+		fmt.Fprintf(&cfg, "allowed_ip=%s\n", cidr)
+	}
 	fmt.Fprintf(&cfg, "persistent_keepalive_interval=25\n")
 	return e.dev.IpcSetOperation(strings.NewReader(cfg.String()))
 }

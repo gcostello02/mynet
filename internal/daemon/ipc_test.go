@@ -27,12 +27,38 @@ func TestStaleSocketRemoval(t *testing.T) {
 }
 
 func TestDaemonPing(t *testing.T) {
+	dir := startTestDaemon(t)
+	waitReachable(t, dir)
+}
+
+func startTestDaemon(t *testing.T) string {
 	dir := filepath.Join(t.TempDir(), ".mynet")
 	_ = os.MkdirAll(dir, 0o700)
 	node := &Node{StateDir: dir}
 	go func() {
 		_ = ServeIPC(dir, node)
 	}()
+	t.Cleanup(func() { _ = RequestQuit(dir) })
+	return dir
+}
+
+func TestDaemonQuit(t *testing.T) {
+	dir := startTestDaemon(t)
+	waitReachable(t, dir)
+	if err := RequestQuit(dir); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !DaemonReachable(dir) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("daemon still reachable after quit")
+}
+
+func waitReachable(t *testing.T, dir string) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if DaemonReachable(dir) {
