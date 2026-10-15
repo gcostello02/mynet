@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,8 +129,16 @@ func runICEPeer(t *testing.T, ws *websocket.Conn, sessionID string, controlling 
 
 	remoteCred := make(chan control.ICECredentialsPayload, 1)
 	done := make(chan struct{})
-	go relaySignals(ws, sessionID, sess, remoteCred, done)
-	defer close(done)
+	var relayWG sync.WaitGroup
+	relayWG.Add(1)
+	go func() {
+		defer relayWG.Done()
+		relaySignals(ws, sessionID, sess, remoteCred, done)
+	}()
+	defer func() {
+		close(done)
+		relayWG.Wait()
+	}()
 
 	if err := sess.SetCandidateHandler(func(c string) {
 		if c == "" {
@@ -179,41 +186,51 @@ func runICEPeer(t *testing.T, ws *websocket.Conn, sessionID string, controlling 
 }
 
 func waitSessionReady(t *testing.T, ws *websocket.Conn, sessionID string) bool {
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		_ = ws.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-		_, data, err := ws.ReadMessage()
-		if err != nil {
-			if isWSTimeout(err) {
+	type result struct {
+		ok bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		for {
+			_, data, err := ws.ReadMessage()
+			if err != nil {
+				ch <- result{false}
+				return
+			}
+			var msg control.WSMessage
+			if json.Unmarshal(data, &msg) != nil {
 				continue
 			}
-			return false
+			if msg.Type == control.SignalSessionReady && msg.SessionID == sessionID {
+				ch <- result{true}
+				return
+			}
 		}
-		var msg control.WSMessage
-		if json.Unmarshal(data, &msg) != nil {
-			continue
-		}
-		if msg.Type == control.SignalSessionReady && msg.SessionID == sessionID {
-			return true
-		}
+	}()
+	select {
+	case r := <-ch:
+		return r.ok
+	case <-time.After(5 * time.Second):
+		_ = ws.Close()
+		t.Fatalf("timeout waiting session_ready")
+		return false
 	}
-	t.Fatalf("timeout waiting session_ready")
-	return false
 }
 
 func relaySignals(ws *websocket.Conn, sessionID string, sess *icepkg.Session, credCh chan control.ICECredentialsPayload, done <-chan struct{}) {
-	for {
+	stop := make(chan struct{})
+	go func() {
 		select {
 		case <-done:
-			return
-		default:
+			_ = ws.Close()
+		case <-stop:
 		}
-		_ = ws.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	}()
+	defer close(stop)
+
+	for {
 		_, data, err := ws.ReadMessage()
 		if err != nil {
-			if isWSTimeout(err) {
-				continue
-			}
 			return
 		}
 		var msg control.WSMessage
@@ -238,20 +255,6 @@ func relaySignals(ws *websocket.Conn, sessionID string, sess *icepkg.Session, cr
 			}
 		}
 	}
-}
-
-func isWSTimeout(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, os.ErrDeadlineExceeded) {
-		return true
-	}
-	var ne net.Error
-	if errors.As(err, &ne) && ne.Timeout() {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "timeout")
 }
 
 func writeWS(ws *websocket.Conn, msg control.WSMessage) error {
