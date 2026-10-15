@@ -20,10 +20,16 @@ const DefaultExcludeTailscaleCIDR = "100.64.0.0/10"
 
 // EffectiveExcludeCIDRs returns CIDR strings used for host-candidate filtering.
 func (c ClientConfig) EffectiveExcludeCIDRs() []string {
-	if len(c.Network.ExcludeCandidateCIDRs) > 0 {
-		return c.Network.ExcludeCandidateCIDRs
+	if c.Network.IndependentMode {
+		if len(c.Network.ExcludeCandidateCIDRs) > 0 {
+			return mergeStrings(DefaultIndependentExcludeCIDRs, c.Network.ExcludeCandidateCIDRs)
+		}
+		return append([]string(nil), DefaultIndependentExcludeCIDRs...)
 	}
-	if c.Network.IndependentMode || !c.AllowTailscaleCandidates {
+	if len(c.Network.ExcludeCandidateCIDRs) > 0 {
+		return append([]string(nil), c.Network.ExcludeCandidateCIDRs...)
+	}
+	if !c.AllowTailscaleCandidates {
 		return []string{DefaultExcludeTailscaleCIDR}
 	}
 	return nil

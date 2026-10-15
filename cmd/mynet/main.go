@@ -217,6 +217,7 @@ func main() {
 			if len(cfg.Network.ExcludeInterfaces) == 0 {
 				cfg.Network.ExcludeInterfaces = []string{"tailscale0"}
 			}
+			// EffectiveExcludeInterfaces merges DefaultIndependentExcludeInterfaces at runtime.
 			if err := config.SaveClientConfig(stateDir, cfg); err != nil {
 				fatal(err)
 			}
@@ -340,6 +341,24 @@ func printDiagnostics(d client.Diagnostics) {
 	fmt.Println()
 	fmt.Println("ICE:")
 	fmt.Printf("  State:            %s\n", d.ICEState)
+	if d.ICEGatherDuration > 0 {
+		fmt.Printf("  Gather duration:  %s\n", d.ICEGatherDuration.Round(time.Millisecond))
+	}
+	if d.LocalCandidateCounts.Total > 0 || d.RemoteCandidateCounts.Total > 0 {
+		fmt.Printf("  Local candidates:  host=%d srflx=%d relay=%d (total %d)\n",
+			d.LocalCandidateCounts.Host, d.LocalCandidateCounts.Srflx, d.LocalCandidateCounts.Relay, d.LocalCandidateCounts.Total)
+		fmt.Printf("  Remote candidates: host=%d srflx=%d relay=%d (total %d)\n",
+			d.RemoteCandidateCounts.Host, d.RemoteCandidateCounts.Srflx, d.RemoteCandidateCounts.Relay, d.RemoteCandidateCounts.Total)
+	}
+	if len(d.ICEExcludeInterfaces) > 0 {
+		fmt.Printf("  Excluded ifaces:  %v\n", d.ICEExcludeInterfaces)
+	}
+	if len(d.ICEExcludeCIDRs) > 0 {
+		fmt.Printf("  Excluded CIDRs:   %v\n", d.ICEExcludeCIDRs)
+	}
+	if len(d.ICEActiveServers) > 0 {
+		fmt.Printf("  ICE servers:      %v\n", d.ICEActiveServers)
+	}
 	if d.Connection != "" {
 		fmt.Printf("  Path:             %s\n", d.Connection)
 		fmt.Printf("  Local Candidate:  %s\n", d.LocalType)
@@ -435,7 +454,7 @@ func formatRTT(d time.Duration) string {
 }
 
 func usage() {
-	fmt.Println(`MyNet V0.2.1 — WireGuard mesh VPN over ICE
+	fmt.Println(`MyNet V0.2.2 — WireGuard mesh VPN over ICE
 
 Usage:
   mynet init --name <device> [--server <url>] [--tailnet]
