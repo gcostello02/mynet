@@ -8,38 +8,45 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gcostello02/mynet/internal/config"
 	"github.com/gcostello02/mynet/internal/control"
 	icepkg "github.com/gcostello02/mynet/internal/ice"
 )
 
 // Diagnostics is a detailed connectivity report for the CLI.
 type Diagnostics struct {
-	DeviceName         string
-	PeerName           string
-	ServerURL          string
-	IndependentMode    bool
-	Signaling          string
-	Authentication     string
-	CoordinationOK     bool
-	PeerOnline         bool
-	ICEState           string
-	Connection         string
-	TURNUsed           bool
-	LocalType          string
-	RemoteType         string
-	LocalAddr          string
-	RemoteAddr         string
-	RTT                time.Duration
-	LastComm           string
-	SignalingReconnect int
-	SignalingLastMsg   string
-	WireGuardState     string
-	LocalCandidates    []icepkg.CandidateInfo
-	RemoteCandidates   []icepkg.CandidateInfo
-	TailscaleSignaling string // No | Yes | Unverified
-	TailscaleDataPath  string // No | Yes | Unverified
-	Warnings           []string
-	LastError          string
+	DeviceName            string
+	PeerName              string
+	ServerURL             string
+	IndependentMode       bool
+	Signaling             string
+	Authentication        string
+	CoordinationOK        bool
+	PeerOnline            bool
+	ICEState              string
+	Connection            string
+	TURNUsed              bool
+	LocalType             string
+	RemoteType            string
+	LocalAddr             string
+	RemoteAddr            string
+	RTT                   time.Duration
+	LastComm              string
+	SignalingReconnect    int
+	SignalingLastMsg      string
+	WireGuardState        string
+	ICEGatherDuration     time.Duration
+	LocalCandidateCounts  icepkg.CandidateCounts
+	RemoteCandidateCounts icepkg.CandidateCounts
+	ICEExcludeInterfaces  []string
+	ICEExcludeCIDRs       []string
+	ICEActiveServers      []string
+	LocalCandidates       []icepkg.CandidateInfo
+	RemoteCandidates      []icepkg.CandidateInfo
+	TailscaleSignaling    string // No | Yes | Unverified
+	TailscaleDataPath     string // No | Yes | Unverified
+	Warnings              []string
+	LastError             string
 }
 
 // Diagnose gathers signaling and path diagnostics for a peer.
@@ -89,10 +96,23 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.LastError = r.lastErr
 	d.LocalCandidates = append([]icepkg.CandidateInfo(nil), r.lastLocalCandidates...)
 	d.RemoteCandidates = append([]icepkg.CandidateInfo(nil), r.lastRemoteCandidates...)
+	d.LocalCandidateCounts = icepkg.CountCandidates(d.LocalCandidates)
+	d.RemoteCandidateCounts = icepkg.CountCandidates(d.RemoteCandidates)
+	d.ICEGatherDuration = r.lastGatherReport.Duration
+	d.ICEExcludeInterfaces = append([]string(nil), r.lastGatherReport.ExcludePatterns...)
+	d.ICEExcludeCIDRs = append([]string(nil), r.lastGatherReport.ExcludeCIDRs...)
+	d.ICEActiveServers = append([]string(nil), r.lastGatherReport.ICEServerURLs...)
 	if r.connState == StateConnected && !r.lastPingAt.IsZero() {
 		d.LastComm = r.lastPingAt.UTC().Format(time.RFC3339)
 	}
 	r.mu.Unlock()
+
+	if d.IndependentMode {
+		servers := config.FilterICEServers(r.cfg, config.BuildICEServers(r.cfg, r.serverICE))
+		if len(servers) == 0 && hasTURNServer(r.serverICE) {
+			d.Warnings = append(d.Warnings, "independent mode: server TURN URL uses an excluded address (e.g. Tailscale 100.x); no usable TURN from coordination server")
+		}
+	}
 
 	d.Warnings = append(d.Warnings, r.independentWarnings()...)
 

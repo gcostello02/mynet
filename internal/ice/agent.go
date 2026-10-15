@@ -50,8 +50,9 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		ipFilter = lanCandidateIPFilter
 	}
 	opts = append(opts, ice.WithIPFilter(ipFilter))
-	if len(cfg.ExcludeInterfaces) > 0 {
-		opts = append(opts, ice.WithInterfaceFilter(InterfaceAllowFilter(cfg.ExcludeInterfaces)))
+	ifacePatterns := cfg.ExcludeInterfaces
+	if len(ifacePatterns) > 0 {
+		opts = append(opts, ice.WithInterfaceFilter(InterfaceAllowFilter(ifacePatterns)))
 	}
 	if cfg.RelayOnly {
 		opts = append(opts, ice.WithCandidateTypes([]ice.CandidateType{ice.CandidateTypeRelay}))
@@ -84,6 +85,11 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// URLsFromICEServers lists STUN/TURN URLs (for diagnostics).
+func URLsFromICEServers(servers []control.ICEServer) []string {
+	return iceURLStrings(servers)
 }
 
 func iceURLStrings(servers []control.ICEServer) []string {

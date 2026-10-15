@@ -82,6 +82,8 @@ type Runtime struct {
 	reconnectAttempts   int
 	lastWSMessageType   string
 	lastWSMessageAt     time.Time
+
+	lastGatherReport icepkg.GatherReport
 }
 
 // APIClient returns the coordination HTTP client (session token if logged in).
@@ -191,7 +193,7 @@ func (r *Runtime) refreshICEServers() {
 }
 
 func (r *Runtime) iceServersForSession() []control.ICEServer {
-	return config.BuildICEServers(r.cfg, r.serverICE)
+	return config.FilterICEServers(r.cfg, config.BuildICEServers(r.cfg, r.serverICE))
 }
 
 // ensureWebSocket connects signaling for short-lived CLI use when no persistent loop runs.
@@ -478,7 +480,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		ICEServers:               r.iceServersForSession(),
 		AllowTailscaleCandidates: r.cfg.ICESessionAllowTailscale(),
 		ExcludeCIDRs:             r.cfg.ParsedExcludeCIDRs(),
-		ExcludeInterfaces:        r.cfg.Network.ExcludeInterfaces,
+		ExcludeInterfaces:        r.cfg.EffectiveExcludeInterfaces(),
 		RelayOnly:                opts.RelayOnly,
 	})
 	if err != nil {
@@ -543,6 +545,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	sig.mu.Unlock()
 	iceTrace("ice_remote_credentials_ready", map[string]string{"session_id": sessionID})
 
+	gatherStart := time.Now()
 	if err := sess.Gather(); err != nil {
 		return nil, icepkg.PathInfo{}, err
 	}
@@ -551,11 +554,21 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		iceTrace("ice_gather_timeout", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 		return nil, icepkg.PathInfo{}, err
 	}
+	gatherDur := time.Since(gatherStart)
 	iceTrace("ice_gather_complete", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 	loc, err := sess.LocalCandidates()
 	if err == nil {
 		r.mu.Lock()
 		r.lastLocalCandidates = loc
+		counts := icepkg.CountCandidates(loc)
+		r.lastGatherReport = icepkg.GatherReport{
+			Duration:        gatherDur,
+			AgentState:      sess.AgentState(),
+			Local:           counts,
+			ExcludePatterns: r.cfg.EffectiveExcludeInterfaces(),
+			ExcludeCIDRs:    r.cfg.EffectiveExcludeCIDRs(),
+			ICEServerURLs:   icepkg.URLsFromICEServers(r.iceServersForSession()),
+		}
 		r.mu.Unlock()
 	}
 	if opts.RelayOnly {
