@@ -1,5 +1,9 @@
 /bin/
 /dist/
+env.sh
+devices.db
+*.db
+server.log
 *.exe
 *.test
 *.out

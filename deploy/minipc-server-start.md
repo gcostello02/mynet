@@ -6,10 +6,25 @@ Use this on the host that runs `mynet-server` behind Cloudflare Tunnel (`https:/
 
 | Path | Purpose |
 |------|---------|
-| `~/mynet/env.sh` | `MYNET_SERVER_SECRET`, `MYNET_ENROLLMENT_SECRET`, TURN vars, `MYNET_DATA_PATH` |
-| `~/mynet/mynet-server` | Server binary |
-| `~/mynet/devices.db` | SQLite enrollments (`chmod 600`) |
-| `~/mynet/start-mynet-server.sh` | Repeatable launcher |
+| `~/mynet/` | Git clone (`git@github.com:gcostello02/mynet.git`) |
+| `~/mynet/env.sh` | Secrets (gitignored locally; not committed) |
+| `~/mynet/devices.db` | SQLite enrollments (`chmod 600`, gitignored) |
+| `~/mynet/bin/mynet-server` | Built with `make build` |
+| `~/mynet/start-mynet-server.sh` | Launcher (uses `bin/mynet-server`) |
+
+Go toolchain (if not system-wide): `~/sdk/go/bin` (Go 1.24+ downloads `go 1.27` via `GOTOOLCHAIN`).
+
+## Update after `git pull`
+
+```bash
+cd ~/mynet
+git pull
+export PATH="$HOME/sdk/go/bin:$PATH"
+make build
+# restart server only:
+pkill -f "mynet-server --listen" || true
+nohup ./start-mynet-server.sh >>server.log 2>&1 &
+```
 
 ## Start (always uses persistence)
 
