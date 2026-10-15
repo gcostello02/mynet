@@ -135,23 +135,37 @@ func (n *Node) Up(ctx context.Context) error {
 	tunMgr := tundev.NewManager()
 	tunDev, name, err := tunMgr.Open("mynet0")
 	if err != nil {
-		return fmt.Errorf("tun (requires root/CAP_NET_ADMIN): %w", err)
-	}
-	if err := tunMgr.Configure(addr); err != nil {
-		_ = tunMgr.Cleanup()
-		return err
+		return fmt.Errorf("create TUN (requires root/CAP_NET_ADMIN): %w", err)
 	}
 
 	bind := wgbind.NewICEBind()
 	engine, err := wgengine.New(tunDev, bind)
 	if err != nil {
 		_ = tunMgr.Cleanup()
-		return err
+		return fmt.Errorf("wireguard engine: %w", err)
 	}
-	if err := engine.Up(privHex, 51820); err != nil {
+
+	abort := func(step string, err error) error {
 		_ = engine.Close()
 		_ = tunMgr.Cleanup()
-		return err
+		return fmt.Errorf("%s: %w", step, err)
+	}
+
+	if err := tunMgr.Configure(addr); err != nil {
+		return abort("configure TUN "+name, err)
+	}
+	if err := engine.Up(privHex, 51820); err != nil {
+		return abort("wireguard up on "+name, err)
+	}
+
+	for _, p := range vpnCfg.Peers {
+		peerIP := netip.MustParseAddr(p.VPNIPv4)
+		if err := tunMgr.AddPeerRoute(peerIP); err != nil {
+			return abort(fmt.Sprintf("route to peer %s", p.Name), err)
+		}
+		if err := engine.SetPeer(p.WGPublicKey, peerIP, p.VPNIPv4+"/32"); err != nil {
+			return abort(fmt.Sprintf("wireguard peer %s", p.Name), err)
+		}
 	}
 
 	n.mu.Lock()
@@ -165,28 +179,17 @@ func (n *Node) Up(ctx context.Context) error {
 	n.peers = make(map[string]PeerStatus)
 	n.mu.Unlock()
 
-	var setupErr error
 	for _, p := range vpnCfg.Peers {
-		if err := n.ensurePeer(ctx, rt, id.DeviceID, p); err != nil {
-			n.Logger.Warn("peer setup", "peer", p.Name, "err", err)
-			setupErr = err
+		if err := n.attachPeerICE(ctx, rt, id.DeviceID, p); err != nil {
+			_ = n.Down()
+			return fmt.Errorf("ice peer %s: %w", p.Name, err)
 		}
-	}
-	if setupErr != nil && len(vpnCfg.Peers) == 1 {
-		_ = n.Down()
-		return setupErr
 	}
 	return nil
 }
 
-func (n *Node) ensurePeer(ctx context.Context, rt *client.Runtime, selfID string, p control.VPNPeerConfig) error {
+func (n *Node) attachPeerICE(ctx context.Context, rt *client.Runtime, selfID string, p control.VPNPeerConfig) error {
 	peerIP := netip.MustParseAddr(p.VPNIPv4)
-	if err := n.tunMgr.AddPeerRoute(peerIP); err != nil {
-		return err
-	}
-	if err := n.engine.SetPeer(p.WGPublicKey, peerIP, p.VPNIPv4+"/32"); err != nil {
-		return err
-	}
 	var link *client.PeerLink
 	var err error
 	if shouldInitiateICE(selfID, p.DeviceID) {

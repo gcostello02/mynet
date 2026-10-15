@@ -48,11 +48,11 @@ func (e *Engine) Down() error {
 
 func (e *Engine) Close() error {
 	_ = e.Down()
-	e.dev.Close()
+	e.dev.Close() // closes the TUN fd owned by wireguard-go
 	if e.bind != nil {
 		_ = e.bind.Shutdown()
 	}
-	return e.tun.Close()
+	return nil
 }
 
 // SetPeer configures or updates a WireGuard peer.
