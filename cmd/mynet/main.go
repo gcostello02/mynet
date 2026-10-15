@@ -403,7 +403,7 @@ func formatRTT(d time.Duration) string {
 }
 
 func usage() {
-	fmt.Println(`MyNet V0.2.0 — WireGuard mesh VPN over ICE
+	fmt.Println(`MyNet V0.2.1 — WireGuard mesh VPN over ICE
 
 Usage:
   mynet init --name <device> [--server <url>] [--tailnet]

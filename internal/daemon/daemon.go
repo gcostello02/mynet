@@ -7,12 +7,11 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/grantcostello/mynet/internal/client"
 	"github.com/grantcostello/mynet/internal/config"
-	"github.com/grantcostello/mynet/internal/control"
 	"github.com/grantcostello/mynet/internal/identity"
 	"github.com/grantcostello/mynet/internal/tundev"
 	"github.com/grantcostello/mynet/internal/wgbind"
@@ -25,15 +24,16 @@ type Node struct {
 	StateDir string
 	Logger   *slog.Logger
 
-	mu      sync.Mutex
-	running bool
-	rt      *client.Runtime
-	engine  *wgengine.Engine
-	bind    *wgbind.ICEBind
-	tunMgr  *tundev.Manager
-	tunName string
-	vpnIP   netip.Addr
-	peers   map[string]PeerStatus
+	mu         sync.Mutex
+	running    bool
+	rt         *client.Runtime
+	engine     *wgengine.Engine
+	bind       *wgbind.ICEBind
+	tunMgr     *tundev.Manager
+	tunName    string
+	vpnIP      netip.Addr
+	peers      map[string]PeerStatus
+	peerCancel context.CancelFunc
 }
 
 type PeerStatus struct {
@@ -127,6 +127,9 @@ func (n *Node) Up(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("vpn config: %w", err)
 	}
+	if err := wgkeys.SaveAssignedVPNIPv4(stateDir, stringsTrimHost(vpnCfg.Address)); err != nil {
+		return fmt.Errorf("sync vpn address: %w", err)
+	}
 	addr, err := netip.ParsePrefix(vpnCfg.Address)
 	if err != nil {
 		return err
@@ -177,51 +180,19 @@ func (n *Node) Up(ctx context.Context) error {
 	n.tunName = name
 	n.vpnIP = addr.Addr()
 	n.peers = make(map[string]PeerStatus)
+	peerCtx, peerCancel := context.WithCancel(context.Background())
+	n.peerCancel = peerCancel
 	n.mu.Unlock()
 
-	for _, p := range vpnCfg.Peers {
-		if err := n.attachPeerICE(ctx, rt, id.DeviceID, p); err != nil {
-			_ = n.Down()
-			return fmt.Errorf("ice peer %s: %w", p.Name, err)
-		}
-	}
+	n.startPeerWorkers(peerCtx, rt, id.DeviceID, vpnCfg.Peers)
 	return nil
 }
 
-func (n *Node) attachPeerICE(ctx context.Context, rt *client.Runtime, selfID string, p control.VPNPeerConfig) error {
-	peerIP := netip.MustParseAddr(p.VPNIPv4)
-	var link *client.PeerLink
-	var err error
-	if shouldInitiateICE(selfID, p.DeviceID) {
-		link, err = rt.ConnectPeerVPN(p.Name)
-		if err != nil {
-			return err
-		}
-	} else {
-		deadline := time.Now().Add(60 * time.Second)
-		for time.Now().Before(deadline) {
-			if l, ok := rt.PeerLink(p.Name); ok {
-				link = l
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		if link == nil {
-			return fmt.Errorf("timed out waiting for ICE from peer %s", p.Name)
-		}
+func stringsTrimHost(addr string) string {
+	if i := strings.Index(addr, "/"); i >= 0 {
+		return addr[:i]
 	}
-	n.bind.SetPeerConn(peerIP, link.Conn)
-	n.mu.Lock()
-	n.peers[p.Name] = PeerStatus{
-		Name:        p.Name,
-		VPNIP:       p.VPNIPv4,
-		Transport:   link.Path.Connection,
-		State:       "Connected",
-		TURNUsed:    link.Path.TURNUsed,
-		WGPublicKey: p.WGPublicKey,
-	}
-	n.mu.Unlock()
-	return nil
+	return addr
 }
 
 func shouldInitiateICE(selfID, peerID string) bool {
@@ -242,10 +213,12 @@ func (n *Node) Down() error {
 		n.mu.Unlock()
 		return nil
 	}
+	peerCancel := n.peerCancel
 	engine := n.engine
 	rt := n.rt
 	tunMgr := n.tunMgr
 	tunName := n.tunName
+	n.peerCancel = nil
 	n.running = false
 	n.engine = nil
 	n.rt = nil
@@ -256,6 +229,9 @@ func (n *Node) Down() error {
 	n.peers = nil
 	n.mu.Unlock()
 
+	if peerCancel != nil {
+		peerCancel()
+	}
 	if engine != nil {
 		_ = engine.Close()
 	}

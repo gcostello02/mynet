@@ -103,11 +103,11 @@ func (s *Server) handleVPNConfig(w http.ResponseWriter, r *http.Request, deviceI
 func (s *Server) vpnPool() *net.IPNet {
 	cidr := s.cfg.VPN.IPv4CIDR
 	if cidr == "" {
-		cidr = "10.77.0.0/16"
+		cidr = "172.31.240.0/20"
 	}
 	_, n, err := net.ParseCIDR(cidr)
 	if err != nil {
-		_, n, _ = net.ParseCIDR("10.77.0.0/16")
+		_, n, _ = net.ParseCIDR("172.31.240.0/20")
 	}
 	return n
 }
