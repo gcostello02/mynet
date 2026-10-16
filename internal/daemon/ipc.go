@@ -25,8 +25,19 @@ func PIDPath(stateDir string) string {
 }
 
 type Request struct {
-	Method string `json:"method"`
-	Peer   string `json:"peer,omitempty"`
+	Method  string `json:"method"`
+	Peer    string `json:"peer,omitempty"`
+	Seconds int    `json:"seconds,omitempty"`
+	Profile string `json:"profile,omitempty"` // heap, allocs, goroutine, mutex, block
+}
+
+// ProfileInfo is returned by profile_* IPC methods.
+type ProfileInfo struct {
+	Enabled    bool   `json:"enabled"`
+	SocketPath string `json:"socket_path,omitempty"`
+	OutputPath string `json:"output_path,omitempty"`
+	Seconds    int    `json:"seconds,omitempty"`
+	Kind       string `json:"kind,omitempty"`
 }
 
 type Response struct {
@@ -36,6 +47,7 @@ type Response struct {
 	Preflight   *PreflightResponse  `json:"preflight,omitempty"`
 	Diagnostics *client.Diagnostics `json:"diagnostics,omitempty"`
 	Peers       []control.PeerInfo  `json:"peers,omitempty"`
+	Profile     *ProfileInfo        `json:"profile,omitempty"`
 }
 
 type PreflightResponse struct {
@@ -84,13 +96,18 @@ func CallIPC(stateDir string, method string) (Response, error) {
 
 // CallIPCWithPeer sends a daemon request with an optional peer name (diagnose).
 func CallIPCWithPeer(stateDir string, method, peer string) (Response, error) {
+	return CallIPCRequest(stateDir, Request{Method: method, Peer: peer})
+}
+
+// CallIPCRequest sends a structured daemon request.
+func CallIPCRequest(stateDir string, req Request) (Response, error) {
 	path := SocketPath(stateDir)
 	conn, err := net.Dial("unix", path)
 	if err != nil {
 		return Response{}, err
 	}
 	defer conn.Close()
-	if err := json.NewEncoder(conn).Encode(Request{Method: method, Peer: peer}); err != nil {
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return Response{}, err
 	}
 	var resp Response
