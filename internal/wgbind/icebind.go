@@ -62,8 +62,9 @@ type ICEBind struct {
 }
 
 type inboundPkt struct {
-	data []byte
-	ep   conn.Endpoint
+	buf []byte // len maxWGPacket; first n bytes are the datagram
+	n   int
+	ep  conn.Endpoint
 }
 
 func NewICEBind() *ICEBind {
@@ -177,45 +178,52 @@ func (b *ICEBind) readLoop(vpnIP netip.Addr, pt *peerTransport) {
 		close(pt.closed)
 	}()
 	c := pt.conn
-	buf := make([]byte, maxWGPacket)
 	ep := &PeerEndpoint{VPNIP: vpnIP}
 	for {
+		buf := getPacketBuf()
 		n, err := c.Read(buf)
 		if err != nil {
+			putPacketBuf(buf)
 			return
 		}
 		if n == 0 {
+			putPacketBuf(buf)
 			continue
 		}
 		pt.counters.recvPackets.Add(1)
 		pt.counters.recvBytes.Add(uint64(n))
 		pt.counters.health.recordRecv()
-		pkt := append([]byte(nil), buf[:n]...)
+		pkt := inboundPkt{buf: buf, n: n, ep: ep}
 		b.mu.RLock()
 		shutdown := b.shutdown
 		inbound := b.inbound
 		sig := b.closeSignal
 		b.mu.RUnlock()
 		if shutdown || inbound == nil {
+			putPacketBuf(buf)
 			return
 		}
 		if sig != nil {
 			select {
 			case <-sig:
+				putPacketBuf(buf)
 				return
 			default:
 			}
 		}
 		select {
-		case inbound <- inboundPkt{data: pkt, ep: ep}:
+		case inbound <- pkt:
 		default:
 			pt.counters.recvDropped.Add(1)
 			if sig != nil {
 				select {
-				case inbound <- inboundPkt{data: pkt, ep: ep}:
+				case inbound <- pkt:
 				case <-sig:
+					putPacketBuf(buf)
 					return
 				}
+			} else {
+				putPacketBuf(buf)
 			}
 		}
 	}
@@ -254,9 +262,10 @@ func (b *ICEBind) Open(_ uint16) ([]conn.ReceiveFunc, uint16, error) {
 			if len(packets) == 0 {
 				return 0, errors.New("no buffers")
 			}
-			n := copy(packets[0], pkt.data)
+			n := copy(packets[0], pkt.buf[:pkt.n])
 			sizes[0] = n
 			eps[0] = pkt.ep
+			putPacketBuf(pkt.buf)
 			return 1, nil
 		}
 	}
@@ -335,6 +344,9 @@ func (b *ICEBind) Shutdown() error {
 	}
 	if inbound != nil {
 		close(inbound)
+		for pkt := range inbound {
+			putPacketBuf(pkt.buf)
+		}
 	}
 	return nil
 }

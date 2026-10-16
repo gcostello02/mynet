@@ -4,6 +4,8 @@ Profiling is **opt-in** and **off by default**. It does not change the WireGuard
 
 Never bind profiling to a public TCP address.
 
+On macOS/Linux, `mynet _daemon` usually runs as **root** (`sudo mynet up`). Restarting with `MYNET_ENABLE_PPROF=1` requires the same privilege (`sudo -E env MYNET_ENABLE_PPROF=1 mynet daemon stop` then `sudo -E env MYNET_ENABLE_PPROF=1 mynet up`). The CLI can talk to the daemon via the mode-0600 Unix socket in your state dir without root.
+
 ## Enable profiling
 
 Restart the daemon with profiling enabled (requires a deliberate restart; not enabled on running daemons without restart):
