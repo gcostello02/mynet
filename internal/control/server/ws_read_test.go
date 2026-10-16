@@ -35,13 +35,13 @@ func TestRelaySignalsExitsWithoutPanicOnAbruptClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
-	cred := make(chan control.ICECredentialsPayload, 1)
+	sig := &icePeerSig{remoteCred: make(chan control.ICECredentialsPayload, 1)}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		relaySignals(conn, "sess", sess, cred, done)
+		relaySignals(conn, "sess", sess, sig, done)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -70,12 +70,12 @@ func TestRelaySignalsDoesNotPollWithReadDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
-	cred := make(chan control.ICECredentialsPayload, 1)
+	sig := &icePeerSig{remoteCred: make(chan control.ICECredentialsPayload, 1)}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		relaySignals(conn, "sess", sess, cred, done)
+		relaySignals(conn, "sess", sess, sig, done)
 	}()
 	time.Sleep(600 * time.Millisecond)
 	close(done)

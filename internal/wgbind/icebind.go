@@ -44,6 +44,7 @@ type peerTransport struct {
 	conn      net.Conn
 	closed    chan struct{} // closed when readLoop exits (conn dead or replaced)
 	counters  *peerCounters
+	closeOnce sync.Once
 }
 
 // ICEBind sends WireGuard datagrams over nominated ice.Conn instances.
@@ -139,17 +140,23 @@ func (b *ICEBind) Stats() BindStats {
 		if pt == nil {
 			continue
 		}
+		lastErr, lastErrAt, lastSendOK, lastRecv, consecutive := pt.counters.health.snapshot()
 		st.Peers = append(st.Peers, PeerTransportStats{
-			VPNIP:           ip,
-			HasActiveConn:   pt.conn != nil,
-			SendPackets:     pt.counters.sendPackets.Load(),
-			SendBytes:       pt.counters.sendBytes.Load(),
-			SendNoTransport: pt.counters.sendNoTransport.Load(),
-			SendErrors:      pt.counters.sendErrors.Load(),
-			RecvPackets:     pt.counters.recvPackets.Load(),
-			RecvBytes:       pt.counters.recvBytes.Load(),
-			RecvDropped:     pt.counters.recvDropped.Load(),
-			ReadLoopExits:   pt.counters.readLoopExits.Load(),
+			VPNIP:             ip,
+			HasActiveConn:       pt.conn != nil,
+			SendPackets:         pt.counters.sendPackets.Load(),
+			SendBytes:           pt.counters.sendBytes.Load(),
+			SendNoTransport:     pt.counters.sendNoTransport.Load(),
+			SendErrors:          pt.counters.sendErrors.Load(),
+			ConsecutiveErrors:   consecutive,
+			LastSendError:       lastErr,
+			LastSendErrorAt:     lastErrAt,
+			LastSendOKAt:        lastSendOK,
+			LastRecvAt:          lastRecv,
+			RecvPackets:         pt.counters.recvPackets.Load(),
+			RecvBytes:           pt.counters.recvBytes.Load(),
+			RecvDropped:         pt.counters.recvDropped.Load(),
+			ReadLoopExits:       pt.counters.readLoopExits.Load(),
 		})
 	}
 	return st
@@ -182,6 +189,7 @@ func (b *ICEBind) readLoop(vpnIP netip.Addr, pt *peerTransport) {
 		}
 		pt.counters.recvPackets.Add(1)
 		pt.counters.recvBytes.Add(uint64(n))
+		pt.counters.health.recordRecv()
 		pkt := append([]byte(nil), buf[:n]...)
 		b.mu.RLock()
 		shutdown := b.shutdown
@@ -357,10 +365,15 @@ func (b *ICEBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		}
 		if _, err := pt.conn.Write(buf); err != nil {
 			pt.counters.sendErrors.Add(1)
+			terminal, _ := pt.counters.health.recordSendErr(err)
+			if terminal {
+				b.closePeerTransport(pe.VPNIP, pt)
+			}
 			return err
 		}
 		pt.counters.sendPackets.Add(1)
 		pt.counters.sendBytes.Add(uint64(len(buf)))
+		pt.counters.health.recordSendOK()
 	}
 	return nil
 }
@@ -374,6 +387,17 @@ func (b *ICEBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 }
 
 func (b *ICEBind) BatchSize() int { return 1 }
+
+func (b *ICEBind) closePeerTransport(vpnIP netip.Addr, pt *peerTransport) {
+	pt.closeOnce.Do(func() {
+		b.mu.Lock()
+		cur, ok := b.byIP[vpnIP]
+		if ok && cur == pt && cur.conn != nil {
+			_ = cur.conn.Close()
+		}
+		b.mu.Unlock()
+	})
+}
 
 // DuplexPair creates two binds each with one peer conn over net.Pipe halves.
 func DuplexPair(localIP, remoteIP netip.Addr) (local *ICEBind, remote *ICEBind, cleanup func()) {

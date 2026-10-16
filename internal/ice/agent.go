@@ -12,6 +12,9 @@ import (
 	"github.com/pion/ice/v4"
 )
 
+// ConnectionState is the Pion ICE agent connection state.
+type ConnectionState = ice.ConnectionState
+
 // PathInfo describes the selected ICE candidate pair for diagnostics.
 type PathInfo struct {
 	LocalAddr       string
@@ -37,6 +40,7 @@ type Session struct {
 	path        PathInfo
 	state       ice.ConnectionState
 	onCandidate func(candidate string)
+	onState     func(ConnectionState)
 }
 
 // NewSession creates an ICE agent from SessionConfig.
@@ -46,7 +50,9 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		ice.WithMulticastDNSMode(ice.MulticastDNSModeDisabled),
 	}
 	ipFilter := IPAllowFilter(cfg.ExcludeCIDRs)
-	if !cfg.AllowTailscaleCandidates && len(cfg.ExcludeCIDRs) == 0 {
+	if cfg.LoopbackOnly {
+		ipFilter = loopbackIPFilter
+	} else if !cfg.AllowTailscaleCandidates && len(cfg.ExcludeCIDRs) == 0 {
 		ipFilter = lanCandidateIPFilter
 	}
 	opts = append(opts, ice.WithIPFilter(ipFilter))
@@ -79,7 +85,11 @@ func NewSession(cfg SessionConfig) (*Session, error) {
 		s.mu.Lock()
 		s.state = st
 		s.path.ConnectionState = st.String()
+		fn := s.onState
 		s.mu.Unlock()
+		if fn != nil {
+			fn(st)
+		}
 	}); err != nil {
 		_ = agent.Close()
 		return nil, err
@@ -183,9 +193,43 @@ func (s *Session) State() ice.ConnectionState {
 	return s.state
 }
 
+// SetStateChangeHandler receives ICE agent state transitions (optional).
+func (s *Session) SetStateChangeHandler(fn func(ConnectionState)) {
+	s.mu.Lock()
+	s.onState = fn
+	s.mu.Unlock()
+}
+
+// LivePath returns current path info including live connection state.
+func (s *Session) LivePath() PathInfo {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn != nil {
+		s.path = buildPathInfo(s.conn)
+	}
+	return s.path
+}
+
 // Close shuts down the ICE agent.
 func (s *Session) Close() error {
 	return s.agent.Close()
+}
+
+func loopbackIPFilter(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback()
+}
+
+// StateTerminal reports whether an ICE agent state should tear down the data conn.
+func StateTerminal(st ConnectionState) bool {
+	switch st {
+	case ice.ConnectionStateFailed, ice.ConnectionStateDisconnected, ice.ConnectionStateClosed:
+		return true
+	default:
+		return false
+	}
 }
 
 func buildPathInfo(conn *ice.Conn) PathInfo {

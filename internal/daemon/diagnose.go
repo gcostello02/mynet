@@ -65,6 +65,19 @@ func (n *Node) Diagnose(peerName string) (client.Diagnostics, error) {
 			if d.ICESessionID == "" {
 				d.ICESessionID = p.ICESessionID
 			}
+			if rt != nil {
+				if live, ok := rt.PeerLinkLivePath(peerName); ok && live.ConnectionState != "" {
+					d.ICEState = live.ConnectionState
+					d.LocalType = live.LocalType
+					d.RemoteType = live.RemoteType
+					d.LocalAddr = live.LocalAddr
+					d.RemoteAddr = live.RemoteAddr
+					d.Connection = live.Connection
+					d.TURNUsed = live.TURNUsed
+				}
+			}
+			d.RecoveryAttempts = p.RecoveryAttempts
+			d.RecoveryState = p.RecoveryState
 			if bind != nil && p.VPNIP != "" {
 				mergeBindStats(&d, bind, netip.MustParseAddr(p.VPNIP))
 			}
@@ -87,6 +100,17 @@ func mergeBindStats(d *client.Diagnostics, bind *wgbind.ICEBind, vpnIP netip.Add
 		d.BindSendBytes = p.SendBytes
 		d.BindSendNoTransport = p.SendNoTransport
 		d.BindSendErrors = p.SendErrors
+		d.BindConsecutiveErrors = p.ConsecutiveErrors
+		if !p.LastSendErrorAt.IsZero() {
+			d.BindLastSendError = p.LastSendError
+			d.BindLastSendErrorAt = p.LastSendErrorAt.UTC().Format(time.RFC3339)
+		}
+		if !p.LastSendOKAt.IsZero() {
+			d.BindLastSendOKAt = p.LastSendOKAt.UTC().Format(time.RFC3339)
+		}
+		if !p.LastRecvAt.IsZero() {
+			d.BindLastRecvAt = p.LastRecvAt.UTC().Format(time.RFC3339)
+		}
 		d.BindRecvPackets = p.RecvPackets
 		d.BindRecvBytes = p.RecvBytes
 		d.BindRecvDropped = p.RecvDropped

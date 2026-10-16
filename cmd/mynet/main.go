@@ -398,10 +398,22 @@ func printDiagnostics(d client.Diagnostics) {
 			fmt.Printf("  WG TX/RX bytes:  %d / %d\n", d.WGTxBytes, d.WGRxBytes)
 		}
 		fmt.Printf("  Bind active ICE: %v\n", d.BindHasActiveConn)
-		fmt.Printf("  Bind send pkts:  %d (%d bytes, no-transport=%d, errors=%d)\n",
-			d.BindSendPackets, d.BindSendBytes, d.BindSendNoTransport, d.BindSendErrors)
+		fmt.Printf("  Bind send pkts:  %d (%d bytes, no-transport=%d, errors=%d, streak=%d)\n",
+			d.BindSendPackets, d.BindSendBytes, d.BindSendNoTransport, d.BindSendErrors, d.BindConsecutiveErrors)
+		if d.BindLastSendError != "" {
+			fmt.Printf("  Last send error: %s (%s)\n", d.BindLastSendError, d.BindLastSendErrorAt)
+		}
+		if d.BindLastSendOKAt != "" {
+			fmt.Printf("  Last bind send OK: %s\n", d.BindLastSendOKAt)
+		}
+		if d.BindLastRecvAt != "" {
+			fmt.Printf("  Last bind recv:    %s\n", d.BindLastRecvAt)
+		}
 		fmt.Printf("  Bind recv pkts:  %d (%d bytes, dropped=%d)\n",
 			d.BindRecvPackets, d.BindRecvBytes, d.BindRecvDropped)
+		if d.RecoveryState != "" {
+			fmt.Printf("  Recovery:        %s (attempts=%d)\n", d.RecoveryState, d.RecoveryAttempts)
+		}
 	}
 	fmt.Println()
 	fmt.Println("Tailscale Dependency:")

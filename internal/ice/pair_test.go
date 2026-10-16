@@ -1,7 +1,6 @@
 package icenet
 
 import (
-	"context"
 	"net"
 	"sync"
 	"testing"
@@ -11,23 +10,33 @@ import (
 )
 
 func TestLocalICEPairPing(t *testing.T) {
-	credAtoB := make(chan [2]string, 1)
-	credBtoA := make(chan [2]string, 1)
-	candAtoB := make(chan string, 32)
-	candBtoA := make(chan string, 32)
+	ex := &PairExchange{
+		SendCred: make(chan [2]string, 1),
+		RecvCred: make(chan [2]string, 1),
+		SendCand: make(chan string, 64),
+		RecvCand: make(chan string, 64),
+	}
+	// cross-wire B's channels
+	exB := &PairExchange{
+		SendCred: ex.RecvCred,
+		RecvCred: ex.SendCred,
+		SendCand: ex.RecvCand,
+		RecvCand: ex.SendCand,
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var connA, connB net.Conn
+	var sessA, sessB *Session
 	var errA, errB error
 
 	go func() {
 		defer wg.Done()
-		connA, errA = dialLocalPeer(true, credAtoB, credBtoA, candAtoB, candBtoA)
+		sessA, connA, errA = PairDial(true, ex)
 	}()
 	go func() {
 		defer wg.Done()
-		connB, errB = dialLocalPeer(false, credBtoA, credAtoB, candBtoA, candAtoB)
+		sessB, connB, errB = PairDial(false, exB)
 	}()
 	wg.Wait()
 
@@ -37,9 +46,26 @@ func TestLocalICEPairPing(t *testing.T) {
 	if errB != nil {
 		t.Fatal("controlled:", errB)
 	}
+	defer func() {
+		if connA != nil {
+			_ = connA.Close()
+		}
+		if connB != nil {
+			_ = connB.Close()
+		}
+		if sessA != nil {
+			_ = sessA.Close()
+		}
+		if sessB != nil {
+			_ = sessB.Close()
+		}
+	}()
 
 	stop := make(chan struct{})
+	var responderReady sync.WaitGroup
+	responderReady.Add(1)
 	go func() {
+		responderReady.Done()
 		for {
 			select {
 			case <-stop:
@@ -55,6 +81,7 @@ func TestLocalICEPairPing(t *testing.T) {
 			}
 		}
 	}()
+	responderReady.Wait()
 
 	rtt, err := peer.PingRTT(connA, 5*time.Second)
 	close(stop)
@@ -64,41 +91,4 @@ func TestLocalICEPairPing(t *testing.T) {
 	if rtt <= 0 {
 		t.Fatal("expected rtt")
 	}
-}
-
-func dialLocalPeer(
-	controlling bool,
-	sendCred, recvCred chan [2]string,
-	sendCand, recvCand chan string,
-) (net.Conn, error) {
-	sess, err := NewSession(SessionConfig{Controlling: controlling})
-	if err != nil {
-		return nil, err
-	}
-	if err := sess.SetCandidateHandler(func(c string) {
-		if c != "" {
-			sendCand <- c
-		}
-	}); err != nil {
-		return nil, err
-	}
-	ufrag, pwd, err := sess.LocalCredentials()
-	if err != nil {
-		return nil, err
-	}
-	sendCred <- [2]string{ufrag, pwd}
-	remote := <-recvCred
-
-	go func() {
-		for cand := range recvCand {
-			_ = sess.AddRemoteCandidate(cand)
-		}
-	}()
-
-	if err := sess.Gather(); err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	return sess.Connect(ctx, remote[0], remote[1])
 }
