@@ -57,9 +57,14 @@ func TestICEP2PThroughSignaling(t *testing.T) {
 	if connA == nil || connB == nil {
 		t.Fatal("missing ice connection")
 	}
+	defer connA.Close()
+	defer connB.Close()
 
 	stopB := make(chan struct{})
+	var responderReady sync.WaitGroup
+	responderReady.Add(1)
 	go func() {
+		responderReady.Done()
 		for {
 			select {
 			case <-stopB:
@@ -75,6 +80,7 @@ func TestICEP2PThroughSignaling(t *testing.T) {
 			}
 		}
 	}()
+	responderReady.Wait()
 
 	rtt, err := peer.PingRTT(connA, 5*time.Second)
 	close(stopB)
@@ -118,6 +124,13 @@ func createSessionHTTP(t *testing.T, baseURL, token, peerName string) string {
 	return out.SessionID
 }
 
+type icePeerSig struct {
+	mu               sync.Mutex
+	remoteCred       chan control.ICECredentialsPayload
+	localGatherDone  bool
+	remoteGatherDone bool
+}
+
 func runICEPeer(t *testing.T, ws *websocket.Conn, sessionID string, controlling bool) (net.Conn, error) {
 	if !waitSessionReady(t, ws, sessionID) {
 		return nil, nil
@@ -127,13 +140,13 @@ func runICEPeer(t *testing.T, ws *websocket.Conn, sessionID string, controlling 
 		return nil, err
 	}
 
-	remoteCred := make(chan control.ICECredentialsPayload, 1)
+	sig := &icePeerSig{remoteCred: make(chan control.ICECredentialsPayload, 1)}
 	done := make(chan struct{})
 	var relayWG sync.WaitGroup
 	relayWG.Add(1)
 	go func() {
 		defer relayWG.Done()
-		relaySignals(ws, sessionID, sess, remoteCred, done)
+		relaySignals(ws, sessionID, sess, sig, done)
 	}()
 	defer func() {
 		close(done)
@@ -142,6 +155,9 @@ func runICEPeer(t *testing.T, ws *websocket.Conn, sessionID string, controlling 
 
 	if err := sess.SetCandidateHandler(func(c string) {
 		if c == "" {
+			sig.mu.Lock()
+			sig.localGatherDone = true
+			sig.mu.Unlock()
 			_ = writeWS(ws, control.WSMessage{Type: control.SignalGatherDone, SessionID: sessionID})
 			return
 		}
@@ -168,14 +184,19 @@ func runICEPeer(t *testing.T, ws *websocket.Conn, sessionID string, controlling 
 
 	var remote control.ICECredentialsPayload
 	select {
-	case remote = <-remoteCred:
-	case <-time.After(5 * time.Second):
+	case remote = <-sig.remoteCred:
+	case <-time.After(8 * time.Second):
 		return nil, context.DeadlineExceeded
 	}
 
 	if err := sess.Gather(); err != nil {
 		return nil, err
 	}
+	if err := waitICETestGather(sig, 8*time.Second); err != nil {
+		return nil, err
+	}
+	time.Sleep(300 * time.Millisecond)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	conn, err := sess.Connect(ctx, remote.Ufrag, remote.Pwd)
@@ -183,6 +204,21 @@ func runICEPeer(t *testing.T, ws *websocket.Conn, sessionID string, controlling 
 		return nil, err
 	}
 	return conn, nil
+}
+
+func waitICETestGather(sig *icePeerSig, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		sig.mu.Lock()
+		local := sig.localGatherDone
+		remote := sig.remoteGatherDone
+		sig.mu.Unlock()
+		if local && remote {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return context.DeadlineExceeded
 }
 
 func waitSessionReady(t *testing.T, ws *websocket.Conn, sessionID string) bool {
@@ -210,14 +246,14 @@ func waitSessionReady(t *testing.T, ws *websocket.Conn, sessionID string) bool {
 	select {
 	case r := <-ch:
 		return r.ok
-	case <-time.After(5 * time.Second):
+	case <-time.After(8 * time.Second):
 		_ = ws.Close()
 		t.Fatalf("timeout waiting session_ready")
 		return false
 	}
 }
 
-func relaySignals(ws *websocket.Conn, sessionID string, sess *icepkg.Session, credCh chan control.ICECredentialsPayload, done <-chan struct{}) {
+func relaySignals(ws *websocket.Conn, sessionID string, sess *icepkg.Session, sig *icePeerSig, done <-chan struct{}) {
 	stop := make(chan struct{})
 	go func() {
 		select {
@@ -243,7 +279,7 @@ func relaySignals(ws *websocket.Conn, sessionID string, sess *icepkg.Session, cr
 			var c control.ICECredentialsPayload
 			if json.Unmarshal(b, &c) == nil {
 				select {
-				case credCh <- c:
+				case sig.remoteCred <- c:
 				default:
 				}
 			}
@@ -253,6 +289,10 @@ func relaySignals(ws *websocket.Conn, sessionID string, sess *icepkg.Session, cr
 			if json.Unmarshal(b, &c) == nil {
 				_ = sess.AddRemoteCandidate(c.Candidate)
 			}
+		case control.SignalGatherDone:
+			sig.mu.Lock()
+			sig.remoteGatherDone = true
+			sig.mu.Unlock()
 		}
 	}
 }

@@ -48,9 +48,11 @@ type PeerStatus struct {
 	RemoteType   string
 	LocalAddr    string
 	RemoteAddr   string
-	ICESessionID string
-	ICEConnState string
-	WGPublicKey  string
+	ICESessionID     string
+	ICEConnState     string
+	RecoveryAttempts int
+	RecoveryState    string
+	WGPublicKey      string
 }
 
 // Preflight returns planned network changes without applying them.

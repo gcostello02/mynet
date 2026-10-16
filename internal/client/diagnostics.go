@@ -58,9 +58,16 @@ type Diagnostics struct {
 	BindSendBytes         uint64
 	BindSendNoTransport   uint64
 	BindSendErrors        uint64
-	BindRecvPackets       uint64
-	BindRecvBytes         uint64
-	BindRecvDropped       uint64
+	BindRecvPackets        uint64
+	BindRecvBytes          uint64
+	BindRecvDropped        uint64
+	BindConsecutiveErrors  int
+	BindLastSendError      string
+	BindLastSendErrorAt    string
+	BindLastSendOKAt       string
+	BindLastRecvAt         string
+	RecoveryAttempts       int
+	RecoveryState          string
 }
 
 // Diagnose gathers signaling and path diagnostics for a peer.
@@ -137,17 +144,21 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 		r.mu.Lock()
 		if link, ok := r.peerLinks[peerName]; ok && link != nil {
 			d.ICESessionID = link.SessionID
-			if link.Path.ConnectionState != "" {
-				d.ICEState = link.Path.ConnectionState
+			path := link.Path
+			if link.Session != nil {
+				path = link.Session.LivePath()
 			}
-			if link.Path.Connection != "" {
-				d.Connection = link.Path.Connection
+			if path.ConnectionState != "" {
+				d.ICEState = path.ConnectionState
 			}
-			d.TURNUsed = link.Path.TURNUsed
-			d.LocalType = link.Path.LocalType
-			d.RemoteType = link.Path.RemoteType
-			d.LocalAddr = link.Path.LocalAddr
-			d.RemoteAddr = link.Path.RemoteAddr
+			if path.Connection != "" {
+				d.Connection = path.Connection
+			}
+			d.TURNUsed = path.TURNUsed
+			d.LocalType = path.LocalType
+			d.RemoteType = path.RemoteType
+			d.LocalAddr = path.LocalAddr
+			d.RemoteAddr = path.RemoteAddr
 		}
 		r.mu.Unlock()
 

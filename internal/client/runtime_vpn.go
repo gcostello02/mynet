@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"time"
 
 	icepkg "github.com/gcostello02/mynet/internal/ice"
@@ -15,6 +16,8 @@ type PeerLink struct {
 	Conn      net.Conn
 	Path      icepkg.PathInfo
 	SessionID string
+	Session   *icepkg.Session
+	LinkGen   uint64
 }
 
 // SetVPNMode enables multi-peer ICE links without MN application framing on conns.
@@ -114,25 +117,85 @@ func (r *Runtime) ConnectPeerVPNContext(ctx context.Context, peerName string) (*
 	return link, nil
 }
 
-func (r *Runtime) storePeerLink(peerName, sessionID string, conn net.Conn, path icepkg.PathInfo) {
+func (r *Runtime) nextPeerLinkGen() uint64 {
+	return atomic.AddUint64(&r.peerLinkGen, 1)
+}
+
+func (r *Runtime) storePeerLink(peerName, sessionID string, conn net.Conn, path icepkg.PathInfo, sess *icepkg.Session) {
+	gen := r.nextPeerLinkGen()
 	r.mu.Lock()
 	if r.peerLinks == nil {
 		r.peerLinks = make(map[string]*PeerLink)
 	}
-	if prev, ok := r.peerLinks[peerName]; ok && prev.Conn != nil && prev.Conn != conn {
-		_ = prev.Conn.Close()
+	if prev, ok := r.peerLinks[peerName]; ok {
+		if prev.Conn != nil && prev.Conn != conn {
+			_ = prev.Conn.Close()
+		}
+		if prev.Session != nil && prev.Session != sess {
+			_ = prev.Session.Close()
+		}
 	}
 	r.peerLinks[peerName] = &PeerLink{
 		PeerName:  peerName,
 		Conn:      conn,
 		Path:      path,
 		SessionID: sessionID,
+		Session:   sess,
+		LinkGen:   gen,
 	}
 	ch := r.vpnWait[peerName]
 	r.mu.Unlock()
+
+	if sess != nil {
+		sess.SetStateChangeHandler(func(st icepkg.ConnectionState) {
+			if !icepkg.StateTerminal(st) {
+				return
+			}
+			r.mu.Lock()
+			cur, ok := r.peerLinks[peerName]
+			if !ok || cur.SessionID != sessionID || cur.LinkGen != gen {
+				r.mu.Unlock()
+				return
+			}
+			c := cur.Conn
+			r.mu.Unlock()
+			if c != nil {
+				_ = c.Close()
+			}
+		})
+	}
+
 	if ch != nil {
 		ch <- nil
 	}
+}
+
+// PeerLinkLivePath returns up-to-date ICE path info for a VPN peer when available.
+func (r *Runtime) PeerLinkLivePath(peerName string) (icepkg.PathInfo, bool) {
+	r.mu.Lock()
+	l, ok := r.peerLinks[peerName]
+	r.mu.Unlock()
+	if !ok || l == nil {
+		return icepkg.PathInfo{}, false
+	}
+	if l.Session != nil {
+		return l.Session.LivePath(), true
+	}
+	return l.Path, true
+}
+
+// PeerLinkStale reports whether the cached link should not be reused.
+func (r *Runtime) PeerLinkStale(peerName string) bool {
+	r.mu.Lock()
+	l, ok := r.peerLinks[peerName]
+	r.mu.Unlock()
+	if !ok || l == nil || l.Conn == nil {
+		return true
+	}
+	if l.Session != nil && icepkg.StateTerminal(l.Session.State()) {
+		return true
+	}
+	return false
 }
 
 func (r *Runtime) failPeerVPN(peerName string, err error) {

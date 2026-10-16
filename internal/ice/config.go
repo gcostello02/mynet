@@ -14,4 +14,5 @@ type SessionConfig struct {
 	ExcludeCIDRs             []*net.IPNet
 	ExcludeInterfaces        []string
 	RelayOnly                bool // gather/nominate relay (TURN) candidates only
+	LoopbackOnly             bool // test-only: host candidates on loopback only
 }

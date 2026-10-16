@@ -72,6 +72,7 @@ type Runtime struct {
 
 	vpnMode       bool
 	peerLinks     map[string]*PeerLink
+	peerLinkGen   uint64
 	vpnWait       map[string]chan error
 	vpnConnecting map[string]bool
 
@@ -385,7 +386,7 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 		delete(r.incomingICE, ready.SessionID)
 		r.mu.Unlock()
 	}()
-	conn, path, err := r.runICESession(ready.SessionID, ready.PeerName, controlling, opts)
+	conn, sess, path, err := r.runICESession(ready.SessionID, ready.PeerName, controlling, opts)
 	if err != nil {
 		r.Logger.Error("ICE session failed", "session", ready.SessionID, "controlling", controlling, "err", err)
 		r.mu.Lock()
@@ -401,7 +402,7 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 			r.failPeerVPN(ready.PeerName, err)
 		}
 	} else if r.vpnMode && conn != nil {
-		r.storePeerLink(ready.PeerName, ready.SessionID, conn, path)
+		r.storePeerLink(ready.PeerName, ready.SessionID, conn, path, sess)
 	}
 	if controlling && !r.vpnMode {
 		r.mu.Lock()
@@ -428,14 +429,14 @@ type signalState struct {
 	peerGatherDone  bool
 }
 
-func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, opts ConnectOptions) (net.Conn, icepkg.PathInfo, error) {
+func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, opts ConnectOptions) (net.Conn, *icepkg.Session, icepkg.PathInfo, error) {
 	iceTrace("ice_begin", map[string]string{
 		"session_id":  sessionID,
 		"peer":        peerName,
 		"controlling": boolString(controlling),
 	})
 	if err := r.ensureWebSocket(); err != nil {
-		return nil, icepkg.PathInfo{}, err
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 	if r.vpnMode {
 		r.mu.Lock()
@@ -490,7 +491,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		RelayOnly:                opts.RelayOnly,
 	})
 	if err != nil {
-		return nil, icepkg.PathInfo{}, err
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 	sig.iceSess = sess
 
@@ -517,18 +518,18 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 			Payload: control.ICECandidatePayload{Candidate: cand},
 		})
 	}); err != nil {
-		return nil, icepkg.PathInfo{}, err
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 
 	ufrag, pwd, err := sess.LocalCredentials()
 	if err != nil {
-		return nil, icepkg.PathInfo{}, err
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 	if err := r.sendSignal(sessionID, control.WSMessage{
 		Type:    control.SignalICECredentials,
 		Payload: control.ICECredentialsPayload{Ufrag: ufrag, Pwd: pwd},
 	}); err != nil {
-		return nil, icepkg.PathInfo{}, err
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 
 	deadline := time.Now().Add(icepkg.ConnectTimeout)
@@ -545,7 +546,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	if !sig.remoteCredReady {
 		sig.mu.Unlock()
 		iceTrace("ice_remote_credentials_timeout", map[string]string{"session_id": sessionID})
-		return nil, icepkg.PathInfo{}, errors.New("timed out waiting for peer ICE credentials")
+		return nil, nil, icepkg.PathInfo{}, errors.New("timed out waiting for peer ICE credentials")
 	}
 	remoteUfrag, remotePwd := sig.remoteUfrag, sig.remotePwd
 	sig.mu.Unlock()
@@ -553,12 +554,12 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 
 	gatherStart := time.Now()
 	if err := sess.Gather(); err != nil {
-		return nil, icepkg.PathInfo{}, err
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 	iceTrace("ice_gather_started", map[string]string{"session_id": sessionID})
 	if err := waitGatherComplete(sig, 8*time.Second); err != nil {
 		iceTrace("ice_gather_timeout", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
-		return nil, icepkg.PathInfo{}, err
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 	gatherDur := time.Since(gatherStart)
 	iceTrace("ice_gather_complete", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
@@ -586,7 +587,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 			}
 		}
 		if !hasRelay {
-			return nil, icepkg.PathInfo{}, errors.New("relay-only: no local TURN relay candidates gathered (check TURN reachability and credentials)")
+			return nil, nil, icepkg.PathInfo{}, errors.New("relay-only: no local TURN relay candidates gathered (check TURN reachability and credentials)")
 		}
 	}
 
@@ -620,7 +621,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 			"agent_state": sess.AgentState(),
 			"err":         err.Error(),
 		})
-		return nil, icepkg.PathInfo{}, fmt.Errorf("ICE failed: %w", err)
+		return nil, nil, icepkg.PathInfo{}, fmt.Errorf("ICE failed: %w", err)
 	}
 	iceTrace("ice_connect_ok", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 	path := sess.Path()
@@ -628,7 +629,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	r.mu.Lock()
 	if r.vpnMode {
 		r.mu.Unlock()
-		return conn, path, nil
+		return conn, sess, path, nil
 	}
 	r.dataConn = conn
 	r.iceSession = sess
@@ -642,7 +643,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	if !controlling {
 		go r.readDataLoop(conn)
 	}
-	return conn, path, nil
+	return conn, sess, path, nil
 }
 
 func (r *Runtime) readDataLoop(conn net.Conn) {
