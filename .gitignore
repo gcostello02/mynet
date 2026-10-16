@@ -13,3 +13,4 @@ server.log
 *.log
 coverage.out
 coverage.html
+profiling-results/
