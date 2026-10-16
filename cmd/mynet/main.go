@@ -148,6 +148,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "unknown vpn subcommand %q (try: mynet vpn register)\n", os.Args[2])
 			os.Exit(2)
 		}
+	case "profile":
+		cmdProfile(os.Args[2:])
 	case "diagnose":
 		fs := flag.NewFlagSet("diagnose", flag.ExitOnError)
 		peer := fs.String("peer", "", "peer device name")

@@ -4,20 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
 	"time"
 )
 
+func profileStatus(stateDir string) *ProfileInfo {
+	info := &ProfileInfo{Enabled: PprofEnabled()}
+	if info.Enabled {
+		info.SocketPath = PprofSocketPath(stateDir)
+	}
+	return info
+}
+
 // Service is the long-lived mynetd IPC server for one state directory.
 type Service struct {
 	StateDir string
 	Node     *Node
 
-	mu   sync.Mutex
-	ln   net.Listener
-	lock *os.File
+	mu      sync.Mutex
+	ln      net.Listener
+	lock    *os.File
+	pprof   *ProfileServer
 }
 
 // Run serves IPC until the listener is closed (quit or shutdown).
@@ -39,7 +49,19 @@ func (s *Service) Run() error {
 	_ = os.Chmod(path, 0o600)
 	_ = chownToSudoInvoker(path)
 
+	ps, err := StartProfileServer(s.StateDir)
+	if err != nil {
+		_ = ln.Close()
+		releaseDaemonLock(s.lock)
+		return fmt.Errorf("pprof: %w", err)
+	}
+	s.pprof = ps
+
 	defer func() {
+		if s.pprof != nil {
+			_ = s.pprof.Close()
+			_ = os.Remove(PprofSocketPath(s.StateDir))
+		}
 		_ = ln.Close()
 		releaseDaemonLock(s.lock)
 		s.lock = nil
@@ -112,6 +134,43 @@ func (s *Service) handleConn(c net.Conn) {
 	case "quit":
 		writeResp(c, Response{OK: true})
 		s.scheduleStop()
+	case "profile_status":
+		writeResp(c, Response{
+			OK:          true,
+			Profile:     profileStatus(s.StateDir),
+		})
+	case "profile_cpu":
+		if !PprofEnabled() {
+			writeResp(c, Response{OK: false, Error: "profiling disabled; restart daemon with MYNET_ENABLE_PPROF=1"})
+			return
+		}
+		secs := clampProfileSeconds(req.Seconds)
+		_ = c.SetDeadline(time.Now().Add(time.Duration(secs+15) * time.Second))
+		out, err := captureProfileFile(s.StateDir, "cpu", func(w io.Writer) error {
+			return WriteCPUProfile(w, secs)
+		})
+		if err != nil {
+			writeResp(c, Response{OK: false, Error: err.Error()})
+			return
+		}
+		writeResp(c, Response{OK: true, Profile: &ProfileInfo{OutputPath: out, Seconds: secs}})
+	case "profile_write":
+		if !PprofEnabled() {
+			writeResp(c, Response{OK: false, Error: "profiling disabled; restart daemon with MYNET_ENABLE_PPROF=1"})
+			return
+		}
+		kind := req.Profile
+		if kind == "" {
+			kind = "heap"
+		}
+		out, err := captureProfileFile(s.StateDir, kind, func(w io.Writer) error {
+			return WriteSnapshotProfile(kind, w)
+		})
+		if err != nil {
+			writeResp(c, Response{OK: false, Error: err.Error()})
+			return
+		}
+		writeResp(c, Response{OK: true, Profile: &ProfileInfo{OutputPath: out, Kind: kind}})
 	default:
 		writeResp(c, Response{OK: false, Error: "unknown method"})
 	}
