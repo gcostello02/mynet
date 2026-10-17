@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"io"
@@ -86,14 +87,14 @@ func cmdProfileCPU(dir string, secs int, out string) {
 	if err != nil {
 		fatal(err)
 	}
-	if !resp.OK || resp.Profile == nil || resp.Profile.OutputPath == "" {
+	if !resp.OK || resp.Profile == nil {
 		fatal(fmt.Errorf("%s", resp.Error))
 	}
-	if err := copyProfileOut(resp.Profile.OutputPath, out); err != nil {
+	if err := writeProfileFromResponse(resp.Profile, out); err != nil {
 		fatal(err)
 	}
 	if out != "" {
-		fmt.Printf("Wrote %s (from %s)\n", out, resp.Profile.OutputPath)
+		fmt.Printf("Wrote %s\n", out)
 	}
 }
 
@@ -102,12 +103,30 @@ func cmdProfileSnapshot(dir string, kind, out string) {
 	if err != nil {
 		fatal(err)
 	}
-	if !resp.OK || resp.Profile == nil || resp.Profile.OutputPath == "" {
+	if !resp.OK || resp.Profile == nil {
 		fatal(fmt.Errorf("%s", resp.Error))
 	}
-	if err := copyProfileOut(resp.Profile.OutputPath, out); err != nil {
+	if err := writeProfileFromResponse(resp.Profile, out); err != nil {
 		fatal(err)
 	}
+}
+
+func writeProfileFromResponse(p *daemon.ProfileInfo, out string) error {
+	if p.DataB64 != "" {
+		data, err := base64.StdEncoding.DecodeString(p.DataB64)
+		if err != nil {
+			return err
+		}
+		if out == "" {
+			_, err = os.Stdout.Write(data)
+			return err
+		}
+		return os.WriteFile(out, data, 0o600)
+	}
+	if p.OutputPath != "" {
+		return copyProfileOut(p.OutputPath, out)
+	}
+	return fmt.Errorf("empty profile response from daemon")
 }
 
 func cmdProfileFetch(dir string, pprofPath, out string) {

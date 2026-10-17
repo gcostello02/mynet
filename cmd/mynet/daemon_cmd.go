@@ -33,6 +33,7 @@ func ensureDaemon(log *slog.Logger) error {
 		return err
 	}
 	cmd := exec.Command(exe, "_daemon")
+	configureDaemonSubprocess(cmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), config.EnvStateDir+"="+dir)
@@ -75,11 +76,11 @@ func cmdUp(log *slog.Logger) {
 	dir := stateDir()
 	resp, err := daemon.CallIPC(dir, "up")
 	if err != nil {
-		_ = daemon.RequestQuit(dir)
+		_ = daemon.RequestQuit(dir, daemon.DefaultQuitWait)
 		fatal(err)
 	}
 	if !resp.OK {
-		_ = daemon.RequestQuit(dir)
+		_ = daemon.RequestQuit(dir, daemon.DefaultQuitWait)
 		fatal(fmt.Errorf("%s", resp.Error))
 	}
 	if resp.Status != nil {
@@ -100,6 +101,9 @@ func cmdDown(log *slog.Logger) {
 	if !resp.OK && resp.Error != "" {
 		fatal(fmt.Errorf("%s", resp.Error))
 	}
+	if resp.Status != nil && resp.Status.LastLifecycleError != "" {
+		fmt.Fprintf(os.Stderr, "Note: %s\n", resp.Status.LastLifecycleError)
+	}
 	if daemon.DaemonReachable(dir) {
 		fmt.Println("MyNet VPN stopped. (Signaling daemon still running; use: mynet daemon stop)")
 	} else {
@@ -114,7 +118,7 @@ func cmdDaemonStop(log *slog.Logger) {
 		fmt.Println("MyNet daemon not running.")
 		return
 	}
-	if err := daemon.RequestQuit(dir); err != nil {
+	if err := daemon.RequestQuit(dir, daemon.DefaultQuitWait); err != nil {
 		fatal(err)
 	}
 	fmt.Println("MyNet daemon stopped.")
@@ -224,6 +228,16 @@ func printVPNStatus(st daemon.Status) {
 		fmt.Printf("  Last WS msg: %s\n", st.SignalingLastMsg)
 	}
 	fmt.Printf("WireGuard: %s\n", st.WireGuard)
+	if st.DaemonPID > 0 {
+		fmt.Printf("Daemon PID: %d", st.DaemonPID)
+		if st.DaemonUptime != "" {
+			fmt.Printf("  (uptime %s)", st.DaemonUptime)
+		}
+		fmt.Println()
+	}
+	if st.LastLifecycleError != "" {
+		fmt.Printf("Last lifecycle note: %s\n", st.LastLifecycleError)
+	}
 	if len(st.Peers) > 0 {
 		fmt.Println()
 		fmt.Println("PEER     MYNET IP    TRANSPORT    STATE")

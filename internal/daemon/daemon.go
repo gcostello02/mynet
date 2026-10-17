@@ -94,6 +94,8 @@ func (n *Node) Up(ctx context.Context) error {
 		n.mu.Unlock()
 		return nil
 	}
+	existingRT := n.rt
+	existingSigCancel := n.signalingCancel
 	n.mu.Unlock()
 
 	stateDir := n.StateDir
@@ -125,18 +127,28 @@ func (n *Node) Up(ctx context.Context) error {
 		return err
 	}
 
-	rt := client.NewRuntime(stateDir, n.Logger)
-	rt.SetVPNMode(true)
-	if err := rt.Login(""); err != nil {
-		return fmt.Errorf("login: %w", err)
+	rt := existingRT
+	var sigCancel context.CancelFunc
+	if rt == nil {
+		rt = client.NewRuntime(stateDir, n.Logger)
+		rt.SetVPNMode(true)
+		if err := rt.Login(""); err != nil {
+			return fmt.Errorf("login: %w", err)
+		}
+		sigCtx, cancel := context.WithCancel(context.Background())
+		sigCancel = cancel
+		n.mu.Lock()
+		n.rt = rt
+		n.signalingCancel = sigCancel
+		n.mu.Unlock()
+		rt.StartSignaling(sigCtx)
+	} else {
+		sigCancel = existingSigCancel
 	}
-	sigCtx, sigCancel := context.WithCancel(context.Background())
-	n.mu.Lock()
-	n.signalingCancel = sigCancel
-	n.mu.Unlock()
-	rt.StartSignaling(sigCtx)
 	if err := rt.WaitForSignaling(ctx, 30*time.Second); err != nil {
-		sigCancel()
+		if sigCancel != nil && existingRT == nil {
+			sigCancel()
+		}
 		return fmt.Errorf("signaling: %w", err)
 	}
 	if _, err := rt.RegisterVPN(); err != nil {
@@ -225,7 +237,7 @@ func (n *Node) VPNActive() bool {
 	return n.running
 }
 
-// Down tears down VPN resources.
+// Down tears down VPN data plane only. Signaling and the daemon IPC server stay up.
 func (n *Node) Down() error {
 	n.mu.Lock()
 	if !n.running {
@@ -233,16 +245,12 @@ func (n *Node) Down() error {
 		return nil
 	}
 	peerCancel := n.peerCancel
-	sigCancel := n.signalingCancel
 	engine := n.engine
-	rt := n.rt
 	tunMgr := n.tunMgr
 	tunName := n.tunName
 	n.peerCancel = nil
-	n.signalingCancel = nil
 	n.running = false
 	n.engine = nil
-	n.rt = nil
 	n.bind = nil
 	n.tunMgr = nil
 	n.tunName = ""
@@ -253,19 +261,31 @@ func (n *Node) Down() error {
 	if peerCancel != nil {
 		peerCancel()
 	}
-	if sigCancel != nil {
-		sigCancel()
-	}
 	if engine != nil {
 		_ = engine.Close()
-	}
-	if rt != nil {
-		_ = rt.Down()
 	}
 	if tunMgr != nil {
 		_ = tunMgr.Cleanup()
 	}
 	_ = tundev.CleanupRoutes(tunName)
+	return nil
+}
+
+// Shutdown tears down VPN and signaling (daemon exit).
+func (n *Node) Shutdown() error {
+	_ = n.Down()
+	n.mu.Lock()
+	sigCancel := n.signalingCancel
+	rt := n.rt
+	n.signalingCancel = nil
+	n.rt = nil
+	n.mu.Unlock()
+	if sigCancel != nil {
+		sigCancel()
+	}
+	if rt != nil {
+		_ = rt.Down()
+	}
 	return nil
 }
 
@@ -280,6 +300,9 @@ type Status struct {
 	SignalingLastMsg   string
 	WireGuard          string
 	Peers              []PeerStatus
+	DaemonPID          int
+	DaemonUptime       string
+	LastLifecycleError string
 }
 
 func (n *Node) Status() Status {
@@ -294,6 +317,8 @@ func (n *Node) Status() Status {
 	}
 	if n.running {
 		st.WireGuard = "Active"
+	} else if n.rt != nil {
+		st.WireGuard = "Stopped"
 	}
 	if n.rt != nil {
 		s, _ := n.rt.Status()

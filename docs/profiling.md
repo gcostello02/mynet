@@ -37,6 +37,8 @@ Sockets (when enabled):
 
 Snapshot files written via IPC land in `$STATE/profiles/` (mode `0700`).
 
+`mynet profile cpu` and `profile snapshot` receive profile bytes over IPC (`data_b64`); the CLI writes your `-o` path as your user. Root-owned `profiles/` files are no longer required.
+
 ## Capture a 30s CPU profile during iperf3
 
 On the **machine running mynetd** (e.g. mini PC receiving traffic):
