@@ -22,7 +22,9 @@ type Engine struct {
 }
 
 func New(tunDev tun.Device, bind *wgbind.ICEBind) (*Engine, error) {
-	logger := device.NewLogger(device.LogLevelError, "mynet-wg: ")
+	// Silent device logger: wireguard-go logs transient "no transport" errors while ICE
+	// is still connecting; mynet surfaces persistent failures via diagnose/status.
+	logger := device.NewLogger(device.LogLevelSilent, "")
 	dev := device.NewDevice(tunDev, bind, logger)
 	return &Engine{dev: dev, bind: bind, tun: tunDev}, nil
 }

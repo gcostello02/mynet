@@ -35,7 +35,8 @@ type Request struct {
 type ProfileInfo struct {
 	Enabled    bool   `json:"enabled"`
 	SocketPath string `json:"socket_path,omitempty"`
-	OutputPath string `json:"output_path,omitempty"`
+	OutputPath string `json:"output_path,omitempty"` // legacy; prefer data_b64
+	DataB64    string `json:"data_b64,omitempty"`
 	Seconds    int    `json:"seconds,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 }

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -62,15 +61,12 @@ func TestCPUProfileIPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !resp.OK || resp.Profile == nil || resp.Profile.OutputPath == "" {
+	if !resp.OK || resp.Profile == nil || resp.Profile.DataB64 == "" {
 		t.Fatalf("resp: %+v err=%s", resp, resp.Error)
 	}
-	st, err := os.Stat(resp.Profile.OutputPath)
-	if err != nil || st.Size() == 0 {
-		t.Fatalf("profile file: %v size=%d", err, st.Size())
+	data, err := decodeProfileBytes(resp.Profile.DataB64)
+	if err != nil || len(data) == 0 {
+		t.Fatalf("decode profile: %v len=%d", err, len(data))
 	}
-	_, _ = CallIPC(dir, "quit")
-	time.Sleep(50 * time.Millisecond)
-	_ = os.Remove(filepath.Join(dir, "mynetd.sock"))
-	_ = os.Remove(PprofSocketPath(dir))
+	_ = RequestQuit(dir, DefaultQuitWait)
 }

@@ -143,11 +143,19 @@ func WriteSnapshotProfile(kind string, w io.Writer) error {
 	}
 }
 
-func captureProfileFile(stateDir, prefix string, write func(io.Writer) error) (string, error) {
+func ensureProfilesDir(stateDir string) error {
 	dir := profilesDir(stateDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return chownToSudoInvoker(dir)
+}
+
+func captureProfileFile(stateDir, prefix string, write func(io.Writer) error) (string, error) {
+	if err := ensureProfilesDir(stateDir); err != nil {
 		return "", err
 	}
+	dir := profilesDir(stateDir)
 	name := fmt.Sprintf("%s-%d.pprof", prefix, time.Now().Unix())
 	path := filepath.Join(dir, name)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
