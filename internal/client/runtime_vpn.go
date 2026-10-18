@@ -245,3 +245,16 @@ func (r *Runtime) ClearPeerLink(peerName string, conn net.Conn) {
 	}
 	r.mu.Unlock()
 }
+
+// InvalidateAllPeerTransports closes active VPN ICE links after a host network change.
+func (r *Runtime) InvalidateAllPeerTransports() {
+	r.mu.Lock()
+	links := r.peerLinks
+	r.peerLinks = make(map[string]*PeerLink)
+	r.mu.Unlock()
+	for _, l := range links {
+		if l != nil && l.Conn != nil {
+			_ = l.Conn.Close()
+		}
+	}
+}

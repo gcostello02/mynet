@@ -66,7 +66,7 @@ func chownToSudoInvoker(path string) error {
 	if os.Geteuid() != 0 {
 		return nil
 	}
-	u := strings.TrimSpace(os.Getenv("SUDO_USER"))
+	u := config.OwnerUsername()
 	if u == "" || u == "root" {
 		return nil
 	}

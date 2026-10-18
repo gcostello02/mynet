@@ -38,7 +38,7 @@ func sudoInvokerHome() (string, error) {
 	if os.Geteuid() != 0 {
 		return "", fmt.Errorf("not root")
 	}
-	if u := strings.TrimSpace(os.Getenv("SUDO_USER")); u != "" && u != "root" {
+	if u := OwnerUsername(); u != "" && u != "root" {
 		ou, err := user.Lookup(u)
 		if err != nil {
 			return "", err
