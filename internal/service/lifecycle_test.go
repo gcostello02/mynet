@@ -108,3 +108,18 @@ func TestSystemdRestartPolicy(t *testing.T) {
 		t.Fatalf("missing systemd policy")
 	}
 }
+
+func TestSystemdUnitPassesAnalyzeVerify(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("systemd-analyze on Linux")
+	}
+	u := SystemdUnit("/bin/mynet", "/etc/mynet/client.env")
+	path := filepath.Join(t.TempDir(), "mynet-daemon.service")
+	if err := os.WriteFile(path, []byte(u), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("systemd-analyze", "verify", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("systemd-analyze verify: %v %s", err, out)
+	}
+}
