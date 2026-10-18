@@ -122,9 +122,12 @@ func (r *Runtime) nextPeerLinkGen() uint64 {
 	return atomic.AddUint64(&r.peerLinkGen, 1)
 }
 
+// peerOnlineICEMaxWait is the upper bound for waitPeerOnlineForICE (overridable in tests).
+var peerOnlineICEMaxWait = 12 * time.Second
+
 // waitPeerOnlineForICE reduces credential-timeout races when the remote daemon is still starting.
 func (r *Runtime) waitPeerOnlineForICE(ctx context.Context, peerName string) {
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(peerOnlineICEMaxWait)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return
