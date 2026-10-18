@@ -1,43 +1,60 @@
 #!/usr/bin/env bash
 # MyNet V0.2.9 controlled rollout — macOS MacBook (client daemon only).
-# Run interactively on the Mac: bash scripts/deploy-v029-mac.sh
-# Deploy mini PC first and confirm health before running this script.
+#   bash scripts/deploy-v029-mac.sh              # live rollout (sudo)
+#   bash scripts/deploy-v029-mac.sh --preflight  # checks only, no sudo/stop/install
 set -euo pipefail
 
 REPO="${MYNET_REPO:-$HOME/Documents/GitHub/mynet}"
-EXPECTED_COMMIT="21092d3aa8c54b7b5a079c62fb88d78f934adc0f"
 CANDIDATE="bin/mynet-v029-candidate"
 BACKUP="bin/mynet.v028-good"
 LIVE="bin/mynet"
 PROF_ENV=(MYNET_ENABLE_PPROF=1)
+PREFLIGHT=0
 
-die() { echo "ERROR: $*" >&2; exit 1; }
-info() { echo "==> $*"; }
+for arg in "$@"; do
+  case "$arg" in
+    --preflight|--dry-run) PREFLIGHT=1 ;;
+    -h|--help)
+      echo "Usage: $0 [--preflight|--dry-run]"
+      echo "  --preflight  Verify host, git, binaries, daemon identity; no deployment."
+      exit 0
+      ;;
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
-info "Host check (expect macOS arm64)"
-[[ "$(uname -s)" == "Darwin" ]] || die "not Darwin"
-[[ "$(uname -m)" == "arm64" ]] || die "not arm64"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deploy-v029-lib.sh
+source "$SCRIPT_DIR/deploy-v029-lib.sh"
 
 cd "$REPO" || die "repo missing: $REPO"
 
-ACTUAL="$(git rev-parse HEAD)"
-[[ "$ACTUAL" == "$EXPECTED_COMMIT" ]] || die "git HEAD $ACTUAL != $EXPECTED_COMMIT"
+run_checks() {
+  info "Host check (expect macOS arm64)"
+  [[ "$(uname -s)" == "Darwin" ]] || die "not Darwin"
+  [[ "$(uname -m)" == "arm64" ]] || die "not arm64"
 
-[[ -x "$BACKUP" ]] || die "missing V0.2.8 backup $BACKUP"
-[[ -x "$CANDIDATE" ]] || die "missing candidate $CANDIDATE"
+  verify_git_contains_implementation
 
-if ! go version -m "$BACKUP" 2>/dev/null | grep -q 'f243542'; then
-  die "backup does not look like f243542"
+  [[ -x "$BACKUP" ]] || die "missing V0.2.8 backup $BACKUP"
+  [[ -x "$CANDIDATE" ]] || die "missing candidate $CANDIDATE"
+
+  verify_backup_binary "$BACKUP"
+  verify_candidate_binary "$CANDIDATE"
+  report_live_binary "$LIVE"
+  preflight_daemon_identity "$REPO" "$LIVE"
+}
+
+if [[ "$PREFLIGHT" -eq 1 ]]; then
+  run_checks
+  info "Preflight OK on $(hostname -s 2>/dev/null || hostname). Deployment was NOT performed."
+  exit 0
 fi
-if ! go version -m "$CANDIDATE" 2>/dev/null | grep -q '21092d3'; then
-  die "candidate is not 21092d3"
-fi
+
+run_checks
 
 info "Identify MyNet client daemon"
-mapfile -t PIDS < <(pgrep -f "${REPO}/${LIVE} _daemon" || true)
-if [[ ${#PIDS[@]} -eq 0 ]]; then
-  mapfile -t PIDS < <(pgrep -f "mynet _daemon" || true)
-fi
+find_mynet_daemon_pids "$REPO" "$LIVE"
 if [[ ${#PIDS[@]} -gt 1 ]]; then
   die "multiple mynet _daemon PIDs: ${PIDS[*]}"
 fi
@@ -57,7 +74,7 @@ fi
 info "Install V0.2.9 candidate"
 cp -a "$CANDIDATE" "${LIVE}.new"
 chmod +x "${LIVE}.new"
-go version -m "${LIVE}.new" | grep mod
+verify_candidate_binary "${LIVE}.new"
 mv "${LIVE}.new" "$LIVE"
 
 info "Start with profiling"
