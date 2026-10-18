@@ -47,6 +47,7 @@ type Node struct {
 	peers           map[string]PeerStatus
 	peerCancel      context.CancelFunc
 	signalingCancel context.CancelFunc
+	netWatch        *NetWatcher
 }
 
 type PeerStatus struct {
@@ -229,7 +230,36 @@ func (n *Node) Up(ctx context.Context) error {
 	n.mu.Unlock()
 
 	n.startPeerWorkers(peerCtx, rt, id.DeviceID, vpnCfg.Peers)
+	n.startNetWatch(peerCtx)
 	return nil
+}
+
+func (n *Node) startNetWatch(ctx context.Context) {
+	n.mu.Lock()
+	if n.netWatch != nil {
+		n.mu.Unlock()
+		return
+	}
+	rt := n.rt
+	w := NewNetWatcher(DefaultNetSnapshot, func() {
+		if n.Logger != nil {
+			n.Logger.Info("network change detected; invalidating ICE transports")
+		}
+		InvalidatePeerTransports(rt)
+	})
+	n.netWatch = w
+	n.mu.Unlock()
+	w.Start(ctx)
+}
+
+func (n *Node) stopNetWatch() {
+	n.mu.Lock()
+	w := n.netWatch
+	n.netWatch = nil
+	n.mu.Unlock()
+	if w != nil {
+		w.Stop()
+	}
 }
 
 func stringsTrimHost(addr string) string {
@@ -271,6 +301,7 @@ func (n *Node) Down() error {
 	n.peers = nil
 	n.mu.Unlock()
 
+	n.stopNetWatch()
 	if peerCancel != nil {
 		peerCancel()
 	}

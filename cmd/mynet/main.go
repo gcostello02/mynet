@@ -229,6 +229,8 @@ func main() {
 			configUsage()
 			os.Exit(2)
 		}
+	case "service":
+		cmdService(os.Args[2:])
 	case "daemon":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: mynet daemon stop")
@@ -551,7 +553,7 @@ func formatRTT(d time.Duration) string {
 }
 
 func usage() {
-	fmt.Println(`MyNet V0.2.2 — WireGuard mesh VPN over ICE
+	fmt.Println(`MyNet — WireGuard mesh VPN over ICE
 
 Usage:
   mynet init --name <device> [--server <url>] [--tailnet]
@@ -567,9 +569,12 @@ Usage:
   mynet up
   mynet down          (stops VPN; daemon may keep running)
   mynet daemon stop   (exit signaling daemon)
+  mynet service install|start|stop|status|logs|upgrade|uninstall
 
 Environment:
-  MYNET_ENROLLMENT_SECRET  enrollment secret for first login`)
+  MYNET_ENROLLMENT_SECRET  enrollment secret for first login
+  MYNET_STATE_DIR          state directory (required for root service)
+  MYNET_SUPERVISED         set by launchd/systemd`)
 }
 
 func fatal(err error) {

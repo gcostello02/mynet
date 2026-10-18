@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/grantcostello/mynet/internal/config"
 	"github.com/grantcostello/mynet/internal/daemon"
+	"github.com/grantcostello/mynet/internal/service"
 	"github.com/grantcostello/mynet/internal/tundev"
 )
 
@@ -27,6 +31,9 @@ func ensureDaemon(log *slog.Logger) error {
 	sock := daemon.SocketPath(dir)
 	if daemon.DaemonReachable(dir) {
 		return nil
+	}
+	if ok, msg := service.ShouldSpawnDetachedDaemon(dir, serviceLocalSpecPath()); !ok {
+		return fmt.Errorf("%s", msg)
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -55,9 +62,36 @@ func runDaemon(log *slog.Logger) {
 	pidPath := filepath.Join(dir, "mynetd.pid")
 	_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
 	_ = chownPIDToInvoker(pidPath)
+
+	if config.RunVPNAtStart() || config.Supervised() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if err := node.Up(ctx); err != nil {
+				log.Error("supervised VPN up failed", "err", err)
+				if config.Supervised() {
+					os.Exit(1)
+				}
+			}
+		}()
+	}
+
+	go handleDaemonSignals(log, dir, node)
+
 	if err := daemon.ServeIPC(dir, node); err != nil {
 		log.Error("daemon exit", "err", err)
 		os.Exit(1)
+	}
+}
+
+func handleDaemonSignals(log *slog.Logger, dir string, node *daemon.Node) {
+	ch := make(chan os.Signal, 2)
+	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+	for sig := range ch {
+		log.Info("signal received", "signal", sig.String())
+		_ = node.Down()
+		_ = daemon.RequestQuit(dir, daemon.DefaultQuitWait)
+		return
 	}
 }
 
@@ -117,6 +151,9 @@ func cmdDaemonStop(log *slog.Logger) {
 		_ = daemon.RemoveStaleSocket(dir)
 		fmt.Println("MyNet daemon not running.")
 		return
+	}
+	if service.SystemUnitInstalled(service.SystemLayoutForOS()) {
+		fmt.Fprintln(os.Stderr, "Note: a system service is installed; prefer: sudo mynet service stop")
 	}
 	if err := daemon.RequestQuit(dir, daemon.DefaultQuitWait); err != nil {
 		fatal(err)
