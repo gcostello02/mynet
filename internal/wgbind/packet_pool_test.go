@@ -1,46 +1,109 @@
 package wgbind
 
 import (
-	"bytes"
+	"fmt"
 	"net"
 	"net/netip"
 	"testing"
-	"time"
+
+	"golang.zx2c4.com/wireguard/conn"
 )
 
+const packetPoolTestCount = 200
+
+func packetPayload(seq int) []byte {
+	p := make([]byte, 1400)
+	p[0] = byte(seq)
+	p[1] = byte(seq >> 8)
+	for j := 2; j < len(p); j++ {
+		p[j] = byte(seq ^ j)
+	}
+	return p
+}
+
+func verifyPayload(buf []byte, n int, seq int) error {
+	exp := packetPayload(seq)
+	if n != len(exp) {
+		return fmt.Errorf("len %d want %d", n, len(exp))
+	}
+	for i := 0; i < n; i++ {
+		if buf[i] != exp[i] {
+			return fmt.Errorf("byte %d: %02x want %02x", i, buf[i], exp[i])
+		}
+	}
+	return nil
+}
+
+// TestPacketPoolRecvIntegrity drives the production receive path (Open → recv4) over
+// loopback UDP with lockstep backpressure. UDP does not guarantee delivery under blind
+// bursts while readLoop blocks on a full inbound channel (see TestPacketPoolRecvIntegrityReliable
+// for a lossless net.Pipe stress test).
 func TestPacketPoolRecvIntegrity(t *testing.T) {
 	ip0 := netip.MustParseAddr("10.88.0.1")
 	ip1 := netip.MustParseAddr("10.88.0.2")
 	bind0, bind1, cleanup := DuplexPairUDP(ip0, ip1)
 	defer cleanup()
 
-	payload := bytes.Repeat([]byte{0xab}, 1400)
+	fns, _, err := bind0.Open(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv4 := fns[0]
+	packets := make([][]byte, 1)
+	packets[0] = make([]byte, maxWGPacket)
+	sizes := make([]int, 1)
+	eps := make([]conn.Endpoint, 1)
+
 	conn := bind1.byIP[ip0].conn
-	for i := 0; i < 200; i++ {
-		if _, err := conn.Write(payload); err != nil {
+	for seq := 0; seq < packetPoolTestCount; seq++ {
+		if _, err := conn.Write(packetPayload(seq)); err != nil {
 			t.Fatal(err)
 		}
-	}
-
-	bind0.mu.RLock()
-	inbound := bind0.inbound
-	bind0.mu.RUnlock()
-	if inbound == nil {
-		t.Fatal("inbound nil")
-	}
-
-	deadline := time.After(2 * time.Second)
-	for i := 0; i < 200; i++ {
-		select {
-		case pkt := <-inbound:
-			if !bytes.Equal(pkt.buf[:pkt.n], payload) {
-				t.Fatalf("packet %d mismatch", i)
-			}
-			putPacketBuf(pkt.buf)
-		case <-deadline:
-			t.Fatalf("only received %d packets", i)
+		got, err := recv4(packets, sizes, eps)
+		if err != nil {
+			t.Fatalf("seq %d recv: %v", seq, err)
+		}
+		if got != 1 {
+			t.Fatalf("seq %d: recv4 returned %d", seq, got)
+		}
+		if err := verifyPayload(packets[0], sizes[0], seq); err != nil {
+			t.Fatalf("seq %d: %v", seq, err)
 		}
 	}
+}
+
+// TestPacketPoolRecvIntegrityReliable uses net.Pipe (no kernel UDP drops) to stress
+// buffer pool reuse and detect premature return-to-pool corruption.
+func TestPacketPoolRecvIntegrityReliable(t *testing.T) {
+	ip1 := netip.MustParseAddr("10.89.0.3")
+	a, b := net.Pipe()
+	bind0 := NewICEBind()
+	bind0.SetPeerConn(ip1, a)
+	fns, _, err := bind0.Open(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv4 := fns[0]
+	packets := make([][]byte, 1)
+	packets[0] = make([]byte, maxWGPacket)
+	sizes := make([]int, 1)
+	eps := make([]conn.Endpoint, 1)
+
+	for seq := 0; seq < packetPoolTestCount; seq++ {
+		payload := packetPayload(seq)
+		if _, err := b.Write(payload); err != nil {
+			t.Fatal(err)
+		}
+		got, err := recv4(packets, sizes, eps)
+		if err != nil || got != 1 {
+			t.Fatalf("seq %d: got=%d err=%v", seq, got, err)
+		}
+		if err := verifyPayload(packets[0], sizes[0], seq); err != nil {
+			t.Fatalf("seq %d: %v", seq, err)
+		}
+	}
+	_ = bind0.Shutdown()
+	_ = b.Close()
 }
 
 func TestPacketPoolPutRejectsWrongCap(t *testing.T) {
