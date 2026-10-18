@@ -76,8 +76,15 @@ func (n *Node) Diagnose(peerName string) (client.Diagnostics, error) {
 					d.TURNUsed = live.TURNUsed
 				}
 			}
-			d.RecoveryAttempts = p.RecoveryAttempts
+			d.RecoveryAttempts = p.ICEFailedAttempts
+			d.ICEFailedAttempts = p.ICEFailedAttempts
+			d.TransportRecoveries = p.TransportRecoveries
 			d.RecoveryState = p.RecoveryState
+			if rt != nil {
+				if tl, ok := rt.PeerRecoveryTimeline(peerName); ok {
+					d.RecoveryTimeline = tl
+				}
+			}
 			if p.State == peerStateTransport {
 				d.DataPathReady = true
 			}

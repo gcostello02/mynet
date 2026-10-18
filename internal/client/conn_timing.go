@@ -18,6 +18,8 @@ const (
 	StageICEConnectStarted    ConnStage = "ice_connect_started"
 	StageICEConnected         ConnStage = "ice_connected"
 	StageDataTransportReady   ConnStage = "data_transport_ready"
+	StageWireGuardHandshake   ConnStage = "wireguard_handshake"
+	StageVPNDataUsable        ConnStage = "vpn_data_usable"
 	StageRecoveryStarted      ConnStage = "recovery_started"
 	StageRecoveryCompleted    ConnStage = "recovery_completed"
 )
@@ -41,7 +43,6 @@ type PeerConnTiming struct {
 	Current      ConnTimingSnapshot
 	LastSuccess  ConnTimingSnapshot
 	LastFailure  ConnTimingSnapshot
-	RecoveryCount int
 }
 
 type connAttempt struct {
@@ -140,23 +141,28 @@ func (ct *connTiming) fail(rec *connAttempt, err string) {
 	ct.mu.Unlock()
 }
 
-// NotePeerRecovery records transport recovery attempts for timing/diagnostics.
-func (r *Runtime) NotePeerRecovery(peer string, started bool) {
-	if r.connTiming != nil {
-		r.connTiming.recovery(peer, started)
+// MarkConnStage records a timing stage on the current attempt for a peer (e.g. WireGuard handshake).
+func (r *Runtime) MarkConnStage(peer, sessionID string, stage ConnStage) {
+	if r.connTiming == nil {
+		return
 	}
+	r.connTiming.markExisting(peer, sessionID, stage)
 }
 
-func (ct *connTiming) recovery(peer string, started bool) {
+func (ct *connTiming) markExisting(peer, sessionID string, stage ConnStage) {
 	ct.mu.Lock()
 	pt := ct.peers[peer]
 	if pt == nil {
-		pt = &PeerConnTiming{}
-		ct.peers[peer] = pt
+		ct.mu.Unlock()
+		return
 	}
-	if started {
-		pt.RecoveryCount++
+	elapsed := time.Since(pt.Current.StartedAt)
+	if pt.Current.Stages == nil {
+		pt.Current.Stages = make(map[ConnStage]time.Duration)
 	}
+	pt.Current.Stages[stage] = elapsed
+	pt.Current.LastStage = stage
+	pt.Current.LastStageAt = elapsed
 	ct.mu.Unlock()
 }
 
@@ -172,6 +178,8 @@ func ConnStageOrder() []ConnStage {
 		StageICEConnectStarted,
 		StageICEConnected,
 		StageDataTransportReady,
+		StageWireGuardHandshake,
+		StageVPNDataUsable,
 		StageRecoveryStarted,
 		StageRecoveryCompleted,
 	}

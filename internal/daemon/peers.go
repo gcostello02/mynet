@@ -30,7 +30,9 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 	peerIP := netip.MustParseAddr(p.VPNIPv4)
 	backoff := time.Second
 	const maxBackoff = 2 * time.Minute
-	recoveryAttempts := 0
+	iceFailures := 0
+	transportRecoveries := 0
+	rt.BeginPeerRecoveryCycle(p.Name)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -38,10 +40,10 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 		if !n.VPNActive() {
 			return
 		}
-		n.setPeerRecovery(p.Name, recoveryAttempts, "connecting")
+		n.setPeerRecovery(p.Name, iceFailures, transportRecoveries, "connecting")
 		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateConnecting, icepkg.PathInfo{}, "")
-		link, err := n.tryPeerICE(ctx, rt, selfID, p)
-		if err == nil && link != nil {
+		link, iceErr := n.tryPeerICE(ctx, rt, selfID, p)
+		if iceErr == nil && link != nil {
 			n.mu.Lock()
 			bind := n.bind
 			n.mu.Unlock()
@@ -52,8 +54,16 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 			if livePath.ConnectionState == "" {
 				livePath = link.Path
 			}
-			n.setPeerRecovery(p.Name, recoveryAttempts, "stable")
+			n.setPeerRecovery(p.Name, iceFailures, transportRecoveries, "stable")
 			n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateTransport, livePath, link.SessionID)
+			n.mu.Lock()
+			eng := n.engine
+			n.mu.Unlock()
+			wgCtx, wgCancel := context.WithTimeout(ctx, 30*time.Second)
+			go func() {
+				observeWireGuardReadiness(wgCtx, rt, eng, p.Name, link.SessionID, p.WGPublicKey)
+				wgCancel()
+			}()
 			backoff = time.Second
 			if bind == nil {
 				select {
@@ -63,8 +73,10 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 			} else if !bind.WaitPeerTransport(ctx, peerIP) {
 				return
 			}
-			recoveryAttempts++
-			n.setPeerRecovery(p.Name, recoveryAttempts, "transport-down")
+			transportRecoveries++
+			rt.NoteTransportRecovery(p.Name)
+			rt.BeginPeerRecoveryCycle(p.Name)
+			n.setPeerRecovery(p.Name, iceFailures, transportRecoveries, "transport-down")
 			rt.ClearPeerLink(p.Name, link.Conn)
 			if bind != nil {
 				bind.RemovePeer(peerIP)
@@ -72,7 +84,13 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 			n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateConnecting, icepkg.PathInfo{}, "")
 			continue
 		}
-		n.setPeerRecovery(p.Name, recoveryAttempts, "waiting")
+		if iceErr != nil && errors.Is(iceErr, context.DeadlineExceeded) {
+			rt.NoteICEAttemptFailed(p.Name, peerErrString(iceErr))
+		}
+		if tl, ok := rt.PeerRecoveryTimeline(p.Name); ok {
+			iceFailures = tl.ICEAttemptsFailed
+		}
+		n.setPeerRecovery(p.Name, iceFailures, transportRecoveries, "waiting")
 		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateWaiting, icepkg.PathInfo{}, "")
 		jitter := time.Duration(rand.Int63n(int64(backoff / 2)))
 		sleep := backoff + jitter
@@ -130,26 +148,27 @@ func peerErrString(err error) string {
 	return err.Error()
 }
 
-func (n *Node) setPeerRecovery(name string, attempts int, state string) {
+func (n *Node) setPeerRecovery(name string, iceFailures, transportRecoveries int, state string) {
 	n.mu.Lock()
-	rt := n.rt
 	if n.peers == nil {
 		n.peers = make(map[string]PeerStatus)
 	}
 	if p, ok := n.peers[name]; ok {
-		p.RecoveryAttempts = attempts
+		p.ICEFailedAttempts = iceFailures
+		p.TransportRecoveries = transportRecoveries
+		p.RecoveryAttempts = iceFailures
 		p.RecoveryState = state
 		n.peers[name] = p
 	} else {
-		n.peers[name] = PeerStatus{Name: name, RecoveryAttempts: attempts, RecoveryState: state}
-	}
-	n.mu.Unlock()
-	if rt != nil {
-		switch state {
-		case "transport-down", "connecting":
-			rt.NotePeerRecovery(name, true)
+		n.peers[name] = PeerStatus{
+			Name:                name,
+			ICEFailedAttempts:   iceFailures,
+			TransportRecoveries: transportRecoveries,
+			RecoveryAttempts:    iceFailures,
+			RecoveryState:       state,
 		}
 	}
+	n.mu.Unlock()
 }
 
 func (n *Node) setPeerStatus(name, vpnIP, wgKey, state string, path icepkg.PathInfo, sessionID string) {
@@ -157,27 +176,31 @@ func (n *Node) setPeerStatus(name, vpnIP, wgKey, state string, path icepkg.PathI
 	if n.peers == nil {
 		n.peers = make(map[string]PeerStatus)
 	}
-	recoveryAttempts := 0
+	iceFailures := 0
+	transportRecoveries := 0
 	recoveryState := ""
 	if prev, ok := n.peers[name]; ok {
-		recoveryAttempts = prev.RecoveryAttempts
+		iceFailures = prev.ICEFailedAttempts
+		transportRecoveries = prev.TransportRecoveries
 		recoveryState = prev.RecoveryState
 	}
 	n.peers[name] = PeerStatus{
-		Name:             name,
-		VPNIP:            vpnIP,
-		State:            state,
-		Transport:        path.Connection,
-		TURNUsed:         path.TURNUsed,
-		LocalType:        path.LocalType,
-		RemoteType:       path.RemoteType,
-		LocalAddr:        path.LocalAddr,
-		RemoteAddr:       path.RemoteAddr,
-		ICESessionID:     sessionID,
-		ICEConnState:     path.ConnectionState,
-		RecoveryAttempts: recoveryAttempts,
-		RecoveryState:    recoveryState,
-		WGPublicKey:      wgKey,
+		Name:                name,
+		VPNIP:               vpnIP,
+		State:               state,
+		Transport:           path.Connection,
+		TURNUsed:            path.TURNUsed,
+		LocalType:           path.LocalType,
+		RemoteType:          path.RemoteType,
+		LocalAddr:           path.LocalAddr,
+		RemoteAddr:          path.RemoteAddr,
+		ICESessionID:        sessionID,
+		ICEConnState:        path.ConnectionState,
+		ICEFailedAttempts:   iceFailures,
+		TransportRecoveries: transportRecoveries,
+		RecoveryAttempts:    iceFailures,
+		RecoveryState:       recoveryState,
+		WGPublicKey:         wgKey,
 	}
 	n.mu.Unlock()
 }

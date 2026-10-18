@@ -102,7 +102,7 @@ func PairDial(controlling bool, ex *PairExchange) (*Session, net.Conn, error) {
 		_ = sess.Close()
 		return nil, nil, errors.New("remote ICE gathering did not complete")
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

@@ -423,7 +423,21 @@ func printDiagnostics(d client.Diagnostics) {
 		fmt.Printf("  Bind recv pkts:  %d (%d bytes, dropped=%d)\n",
 			d.BindRecvPackets, d.BindRecvBytes, d.BindRecvDropped)
 		if d.RecoveryState != "" {
-			fmt.Printf("  Recovery:        %s (attempts=%d)\n", d.RecoveryState, d.RecoveryAttempts)
+			fmt.Printf("  Recovery:        %s (ice-failures=%d transport-down=%d)\n",
+				d.RecoveryState, d.ICEFailedAttempts, d.TransportRecoveries)
+		}
+		if d.RecoveryTimeline.CycleStartedAt.IsZero() == false {
+			if d.RecoveryTimeline.TotalToSuccess > 0 {
+				fmt.Printf("  Recovery wall:   %s (%d ICE attempts, success on #%d)\n",
+					d.RecoveryTimeline.TotalToSuccess.Round(time.Millisecond),
+					d.RecoveryTimeline.ICEAttemptsTotal,
+					d.RecoveryTimeline.SuccessfulAttempt)
+			}
+		}
+		if d.VPNDataPathReady {
+			fmt.Printf("  VPN data path:   ready (WireGuard)\n")
+		} else if d.DataPathReady {
+			fmt.Printf("  VPN data path:   ICE only (awaiting WG handshake/traffic)\n")
 		}
 	}
 	fmt.Println()

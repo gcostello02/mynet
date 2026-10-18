@@ -54,7 +54,11 @@ type Diagnostics struct {
 	HistoricalLastErrorAt string
 	LastSuccessAt         string
 	ConnTiming            ConnTimingSnapshot
-	RecoveryCount         int
+	RecoveryCount         int // deprecated: use ICEFailedAttempts
+	RecoveryTimeline      RecoveryTimeline
+	ICEFailedAttempts     int
+	TransportRecoveries   int
+	VPNDataPathReady      bool
 	ICESessionID          string
 	WGPeerFingerprint     string
 	WGAllowedIPs          []string
@@ -165,10 +169,14 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.Warnings = append(d.Warnings, tailscalePathWarnings(d)...)
 
 	dataPathReady := false
+	vpnDataReady := false
 	if peerName != "" {
 		if pt, ok := r.PeerConnTiming(peerName); ok {
 			d.ConnTiming = pt.Current
-			d.RecoveryCount = pt.RecoveryCount
+		}
+		if rt, ok := r.PeerRecoveryTimeline(peerName); ok {
+			d.RecoveryTimeline = rt
+			d.ICEFailedAttempts = rt.ICEAttemptsFailed
 		}
 		r.mu.Lock()
 		if link, ok := r.peerLinks[peerName]; ok && link != nil {
@@ -207,6 +215,13 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 			dataPathReady = ok && link != nil && link.Conn != nil
 			r.mu.Unlock()
 		}
+		if d.WGLastHandshake != "" {
+			vpnDataReady = true
+		}
+		if stage, ok := d.ConnTiming.Stages[StageVPNDataUsable]; ok {
+			vpnDataReady = true
+			_ = stage
+		}
 
 		peers, err := r.api.Peers()
 		if err != nil {
@@ -229,6 +244,7 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 
 	d.LastError = r.effectiveLastError(peerName, dataPathReady)
 	d.DataPathReady = dataPathReady
+	d.VPNDataPathReady = vpnDataReady || dataPathReady && d.WGLastHandshake != ""
 	if d.ICETransportState == "" && d.ICEState != "" && d.ICEState != "idle" {
 		d.ICETransportState = d.ICEState
 	}
