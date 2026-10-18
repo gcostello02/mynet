@@ -37,6 +37,8 @@ run_checks() {
   [[ -x "$CANDIDATE" ]] || die "missing candidate $CANDIDATE"
   verify_backup_binary "$BACKUP"
   verify_candidate_binary "$CANDIDATE"
+  verify_live_not_already_candidate "$LIVE"
+  assert_clean_install_artifacts "$LIVE"
   report_live_binary "$LIVE"
   preflight_daemon_identity "$REPO" "$LIVE"
 }
@@ -59,7 +61,11 @@ if [[ ${#PIDS[@]} -eq 1 ]]; then
   sudo -E "./$LIVE" daemon stop
   sleep 2
   kill -0 "$PID" 2>/dev/null && die "daemon PID $PID still running"
+else
+  info "No running mynet _daemon; continuing with binary swap only"
 fi
+
+assert_dataplane_quiescent_for_install
 
 info "Install V0.2.10 candidate"
 cp -a "$CANDIDATE" "${LIVE}.new"

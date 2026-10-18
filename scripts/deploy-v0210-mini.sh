@@ -34,11 +34,10 @@ run_checks() {
   [[ -x "$CANDIDATE" ]] || die "missing candidate $CANDIDATE"
   verify_backup_binary "$BACKUP"
   verify_candidate_binary "$CANDIDATE"
+  verify_live_not_already_candidate "$LIVE"
+  assert_clean_install_artifacts "$LIVE"
   report_live_binary "$LIVE"
   preflight_daemon_identity "$REPO" "$LIVE"
-  if ip link show mynet0 &>/dev/null; then
-    info "mynet0 present (expected while daemon runs)"
-  fi
 }
 
 if [[ "$PREFLIGHT" -eq 1 ]]; then
@@ -55,11 +54,16 @@ if [[ ${#PIDS[@]} -gt 1 ]]; then
 fi
 if [[ ${#PIDS[@]} -eq 1 ]]; then
   PID="${PIDS[0]}"
+  info "Stopping daemon PID=$PID"
   sudo -E "./$LIVE" daemon stop
   sleep 2
   kill -0 "$PID" 2>/dev/null && die "daemon still running"
+  ip link show mynet0 &>/dev/null && die "mynet0 still present after stop"
+else
+  info "No running mynet _daemon; continuing with binary swap only"
 fi
-ip link show mynet0 &>/dev/null && die "mynet0 still present after stop"
+
+assert_dataplane_quiescent_for_install
 
 cp -a "$CANDIDATE" "${LIVE}.new"
 chmod +x "${LIVE}.new"
