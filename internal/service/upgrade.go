@@ -37,7 +37,12 @@ func StageCandidate(plan UpgradePlan) error {
 }
 
 // CommitSwap atomically replaces live with staged after the daemon is stopped.
-func CommitSwap(plan UpgradePlan) error {
+func CommitSwap(plan UpgradePlan, stateDir string) error {
+	if stateDir != "" {
+		if err := EnsureDaemonStopped(stateDir); err != nil {
+			return err
+		}
+	}
 	if _, err := os.Stat(plan.StagedPath); err != nil {
 		return fmt.Errorf("staged binary missing: %w", err)
 	}

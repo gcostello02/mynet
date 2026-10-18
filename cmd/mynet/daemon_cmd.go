@@ -76,23 +76,24 @@ func runDaemon(log *slog.Logger) {
 		}()
 	}
 
-	go handleDaemonSignals(log, dir, node)
+	go handleDaemonSignals(log)
 
 	if err := daemon.ServeIPC(dir, node); err != nil {
 		log.Error("daemon exit", "err", err)
 		os.Exit(1)
 	}
+	os.Exit(0)
 }
 
-func handleDaemonSignals(log *slog.Logger, dir string, node *daemon.Node) {
+func handleDaemonSignals(log *slog.Logger) {
 	ch := make(chan os.Signal, 2)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
-	for sig := range ch {
-		log.Info("signal received", "signal", sig.String())
-		_ = node.Down()
-		_ = daemon.RequestQuit(dir, daemon.DefaultQuitWait)
-		return
+	sig := <-ch
+	log.Info("signal received", "signal", sig.String())
+	if daemon.GracefulShutdownFromSignal(30 * time.Second) {
+		os.Exit(0)
 	}
+	os.Exit(1)
 }
 
 func chownPIDToInvoker(path string) error {

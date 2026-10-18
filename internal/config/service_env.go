@@ -43,15 +43,21 @@ func ValidateStateDirPath(dir string) error {
 	if strings.Contains(clean, "..") {
 		return fmt.Errorf("invalid state directory")
 	}
-	fi, err := os.Stat(clean)
+	fi, err := os.Lstat(clean)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("state directory does not exist: %s (run mynet init/login first)", clean)
 		}
 		return err
 	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("state directory must not be a symlink: %s", clean)
+	}
 	if !fi.IsDir() {
 		return fmt.Errorf("state path is not a directory: %s", clean)
+	}
+	if _, err := filepath.EvalSymlinks(clean); err != nil {
+		return fmt.Errorf("state directory path resolution: %w", err)
 	}
 	return nil
 }

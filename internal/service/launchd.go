@@ -38,6 +38,8 @@ func LaunchDaemonPlist(binaryPath, stateDir, ownerUser, logPath string) string {
 		<key>SuccessfulExit</key>
 		<false/>
 	</dict>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
 	<key>StandardOutPath</key>
 	<string>%s</string>
 	<key>StandardErrorPath</key>

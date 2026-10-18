@@ -50,6 +50,13 @@ func ShouldSpawnDetachedDaemon(stateDir string, localSpecPath string) (bool, str
 	if config.Supervised() {
 		return false, "already running under service supervisor in this process"
 	}
+	layout := SystemLayoutForOS()
+	if SystemUnitInstalled(layout) {
+		if !daemon.DaemonReachable(stateDir) {
+			return false, "service is installed but daemon is not reachable — run: mynet service start (or sudo systemctl/launchctl)"
+		}
+		return false, "system service is installed — use mynet service start/stop or IPC to the supervised daemon"
+	}
 	spec, ok, err := LoadLocalSpec(localSpecPath)
 	if err != nil || !ok {
 		return true, ""
@@ -57,8 +64,8 @@ func ShouldSpawnDetachedDaemon(stateDir string, localSpecPath string) (bool, str
 	if spec.StateDir != "" && filepath.Clean(spec.StateDir) != filepath.Clean(stateDir) {
 		return true, ""
 	}
-	if SystemUnitInstalled(SystemLayoutForOS()) && !daemon.DaemonReachable(stateDir) {
-		return false, "service is installed but daemon is not reachable — run: mynet service start (or sudo systemctl/launchctl)"
+	if daemon.DaemonReachable(stateDir) {
+		return true, ""
 	}
 	return true, ""
 }

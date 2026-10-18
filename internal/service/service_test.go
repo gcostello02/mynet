@@ -41,8 +41,12 @@ func TestInstallDryRun(t *testing.T) {
 	if err := os.WriteFile(id, []byte(`{"device_id":"x","name":"t","public_key":"k"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bin := filepath.Join(dir, "mynet")
+	if err := os.WriteFile(bin, []byte{0x7f, 'E', 'L', 'F'}, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	spec, err := Install(InstallOptions{
-		BinaryPath: filepath.Join(dir, "mynet"),
+		BinaryPath: bin,
 		StateDir:   state,
 		OwnerUser:  os.Getenv("USER"),
 		DryRun:     true,
