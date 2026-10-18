@@ -53,6 +53,14 @@ type Runtime struct {
 	iceSession           interface{ Close() error }
 	lastRTT              time.Duration
 	lastErr              string
+	lastErrAt            time.Time
+	lastErrPeer          string
+	lastErrKind          string
+	lastErrSession       string
+	lastHistoricalErr    string
+	lastHistoricalErrAt  time.Time
+	lastSuccessAt        time.Time
+	lastSuccessPeer      string
 	lastPingAt           time.Time
 	lastLocalCandidates  []icepkg.CandidateInfo
 	lastRemoteCandidates []icepkg.CandidateInfo
@@ -85,6 +93,9 @@ type Runtime struct {
 	lastWSMessageAt     time.Time
 
 	lastGatherReport icepkg.GatherReport
+
+	connTiming *connTiming
+	signalingReadyAt time.Time
 }
 
 // APIClient returns the coordination HTTP client (session token if logged in).
@@ -106,6 +117,7 @@ func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
 		signalHandlers: make(map[string]func(control.WSMessage)),
 		pendingSignals: make(map[string][]control.WSMessage),
 		incomingICE:    make(map[string]bool),
+		connTiming:     newConnTiming(),
 	}
 }
 
@@ -389,11 +401,11 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 	conn, sess, path, err := r.runICESession(ready.SessionID, ready.PeerName, controlling, opts)
 	if err != nil {
 		r.Logger.Error("ICE session failed", "session", ready.SessionID, "controlling", controlling, "err", err)
+		r.recordConnError(ready.PeerName, ready.SessionID, "ice_session", err)
 		r.mu.Lock()
 		if !r.vpnMode {
 			r.connState = StateFailed
 		}
-		r.lastErr = err.Error()
 		if !r.vpnMode {
 			r.activeSession = ""
 		}
@@ -435,8 +447,20 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		"peer":        peerName,
 		"controlling": boolString(controlling),
 	})
+	var attempt *connAttempt
+	if r.vpnMode && peerName != "" && r.connTiming != nil {
+		attempt = r.connTiming.beginAttempt(peerName, sessionID)
+		r.connTiming.mark(attempt, StagePeerSessionCreated)
+	}
 	if err := r.ensureWebSocket(); err != nil {
+		if attempt != nil {
+			r.connTiming.fail(attempt, err.Error())
+		}
+		r.recordConnError(peerName, sessionID, "signaling", err)
 		return nil, nil, icepkg.PathInfo{}, err
+	}
+	if attempt != nil {
+		r.connTiming.mark(attempt, StageSignalingReady)
 	}
 	if r.vpnMode {
 		r.mu.Lock()
@@ -454,10 +478,14 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 			var cred control.ICECredentialsPayload
 			if json.Unmarshal(payloadBytes, &cred) == nil {
 				sig.mu.Lock()
+				wasReady := sig.remoteCredReady
 				sig.remoteUfrag = cred.Ufrag
 				sig.remotePwd = cred.Pwd
 				sig.remoteCredReady = true
 				sig.mu.Unlock()
+				if !wasReady && attempt != nil {
+					r.connTiming.mark(attempt, StageRemoteCredReceived)
+				}
 			}
 		case control.SignalICECandidate:
 			payloadBytes, _ := json.Marshal(msg.Payload)
@@ -473,6 +501,9 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 				r.mu.Lock()
 				r.lastRemoteCandidates = append(r.lastRemoteCandidates, icepkg.SummarizeRemoteCandidate(cand.Candidate))
 				r.mu.Unlock()
+				if attempt != nil {
+					r.connTiming.mark(attempt, StageRemoteCandidate)
+				}
 			}
 		case control.SignalGatherDone:
 			sig.mu.Lock()
@@ -546,7 +577,12 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	if !sig.remoteCredReady {
 		sig.mu.Unlock()
 		iceTrace("ice_remote_credentials_timeout", map[string]string{"session_id": sessionID})
-		return nil, nil, icepkg.PathInfo{}, errors.New("timed out waiting for peer ICE credentials")
+		err := errors.New("timed out waiting for peer ICE credentials")
+		if attempt != nil {
+			r.connTiming.fail(attempt, err.Error())
+		}
+		r.recordConnError(peerName, sessionID, "ice_credentials", err)
+		return nil, nil, icepkg.PathInfo{}, err
 	}
 	remoteUfrag, remotePwd := sig.remoteUfrag, sig.remotePwd
 	sig.mu.Unlock()
@@ -554,14 +590,28 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 
 	gatherStart := time.Now()
 	if err := sess.Gather(); err != nil {
+		if attempt != nil {
+			r.connTiming.fail(attempt, err.Error())
+		}
+		r.recordConnError(peerName, sessionID, "ice_gather", err)
 		return nil, nil, icepkg.PathInfo{}, err
+	}
+	if attempt != nil {
+		r.connTiming.mark(attempt, StageGatherStarted)
 	}
 	iceTrace("ice_gather_started", map[string]string{"session_id": sessionID})
 	if err := waitGatherComplete(sig, 8*time.Second); err != nil {
 		iceTrace("ice_gather_timeout", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
+		if attempt != nil {
+			r.connTiming.fail(attempt, err.Error())
+		}
+		r.recordConnError(peerName, sessionID, "ice_gather", err)
 		return nil, nil, icepkg.PathInfo{}, err
 	}
 	gatherDur := time.Since(gatherStart)
+	if attempt != nil {
+		r.connTiming.mark(attempt, StageGatherCompleted)
+	}
 	iceTrace("ice_gather_complete", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 	loc, err := sess.LocalCandidates()
 	if err == nil {
@@ -609,6 +659,9 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		r.mu.Unlock()
 	}()
 
+	if attempt != nil {
+		r.connTiming.mark(attempt, StageICEConnectStarted)
+	}
 	iceTrace("ice_connect_start", map[string]string{
 		"session_id":  sessionID,
 		"agent_state": sess.AgentState(),
@@ -621,7 +674,14 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 			"agent_state": sess.AgentState(),
 			"err":         err.Error(),
 		})
+		if attempt != nil {
+			r.connTiming.fail(attempt, err.Error())
+		}
+		r.recordConnError(peerName, sessionID, "ice_connect", err)
 		return nil, nil, icepkg.PathInfo{}, fmt.Errorf("ICE failed: %w", err)
+	}
+	if attempt != nil {
+		r.connTiming.mark(attempt, StageICEConnected)
 	}
 	iceTrace("ice_connect_ok", map[string]string{"session_id": sessionID, "agent_state": sess.AgentState()})
 	path := sess.Path()
@@ -629,6 +689,11 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	r.mu.Lock()
 	if r.vpnMode {
 		r.mu.Unlock()
+		if attempt != nil {
+			r.connTiming.mark(attempt, StageDataTransportReady)
+			r.connTiming.succeed(attempt)
+		}
+		r.clearConnErrorForPeer(peerName)
 		return conn, sess, path, nil
 	}
 	r.dataConn = conn
@@ -731,6 +796,8 @@ func (r *Runtime) Status() (Status, error) {
 	st.Signaling = snap.State
 	if st.Signaling == "Disconnected" && snap.LastDisconnectReason != "" {
 		st.LastError = snap.LastDisconnectReason
+	} else if st.Signaling == "Connected" {
+		st.LastError = ""
 	}
 	if st.State == StateDisconnected && r.api != nil && r.api.Token != "" {
 		st.State = StateRegistered

@@ -78,11 +78,17 @@ func (n *Node) Diagnose(peerName string) (client.Diagnostics, error) {
 			}
 			d.RecoveryAttempts = p.RecoveryAttempts
 			d.RecoveryState = p.RecoveryState
+			if p.State == peerStateTransport {
+				d.DataPathReady = true
+			}
 			if bind != nil && p.VPNIP != "" {
 				mergeBindStats(&d, bind, netip.MustParseAddr(p.VPNIP))
 			}
 			if engine != nil && p.WGPublicKey != "" {
 				mergeWGStats(&d, engine, p.WGPublicKey)
+			}
+			if rt != nil {
+				d.LastError = rt.EffectiveLastError(peerName, d.DataPathReady)
 			}
 		}
 	}

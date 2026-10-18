@@ -132,6 +132,7 @@ func peerErrString(err error) string {
 
 func (n *Node) setPeerRecovery(name string, attempts int, state string) {
 	n.mu.Lock()
+	rt := n.rt
 	if n.peers == nil {
 		n.peers = make(map[string]PeerStatus)
 	}
@@ -143,6 +144,12 @@ func (n *Node) setPeerRecovery(name string, attempts int, state string) {
 		n.peers[name] = PeerStatus{Name: name, RecoveryAttempts: attempts, RecoveryState: state}
 	}
 	n.mu.Unlock()
+	if rt != nil {
+		switch state {
+		case "transport-down", "connecting":
+			rt.NotePeerRecovery(name, true)
+		}
+	}
 }
 
 func (n *Node) setPeerStatus(name, vpnIP, wgKey, state string, path icepkg.PathInfo, sessionID string) {

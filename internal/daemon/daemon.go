@@ -20,6 +20,17 @@ import (
 	"github.com/gcostello02/mynet/internal/wgkeys"
 )
 
+func (n *Node) configuredVPNIPv4() string {
+	if n.StateDir == "" {
+		return ""
+	}
+	wg, err := wgkeys.Load(n.StateDir)
+	if err != nil || wg.VPNIPv4 == "" {
+		return ""
+	}
+	return wg.VPNIPv4
+}
+
 // Node is the long-running VPN client.
 type Node struct {
 	StateDir string
@@ -310,24 +321,31 @@ func (n *Node) Status() Status {
 	defer n.mu.Unlock()
 	st := Status{
 		DeviceName: "",
-		VPNIP:      n.vpnIP.String(),
 		Interface:  n.tunName,
 		WireGuard:  "Inactive",
 		Signaling:  "Disconnected",
 	}
 	if n.running {
 		st.WireGuard = "Active"
-	} else if n.rt != nil {
+		st.VPNIP = n.vpnIP.String()
+	} else if ip := n.configuredVPNIPv4(); ip != "" {
 		st.WireGuard = "Stopped"
+		st.VPNIP = ip + " (configured, inactive)"
+	} else {
+		st.WireGuard = "Stopped"
+		st.VPNIP = "—"
 	}
 	if n.rt != nil {
 		s, _ := n.rt.Status()
 		st.DeviceName = s.DeviceName
 		st.Signaling = s.Signaling
-		if s.LastError != "" && st.Signaling != "Connected" {
+		snap := n.rt.SignalingSnapshot()
+		if snap.State == "Connecting" {
+			st.Signaling = "Connecting"
+		}
+		if s.LastError != "" && st.Signaling != "Connected" && st.Signaling != "Connecting" {
 			st.SignalingLastError = s.LastError
 		}
-		snap := n.rt.SignalingSnapshot()
 		st.SignalingReconnect = snap.ReconnectAttempts
 		st.SignalingLastMsg = snap.LastMessageType
 	}

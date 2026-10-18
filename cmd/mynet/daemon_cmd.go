@@ -240,9 +240,16 @@ func printVPNStatus(st daemon.Status) {
 	}
 	if len(st.Peers) > 0 {
 		fmt.Println()
-		fmt.Println("PEER     MYNET IP    TRANSPORT    STATE")
+		fmt.Println("PEER     MYNET IP    TRANSPORT    ICE          STATE")
 		for _, p := range st.Peers {
-			fmt.Printf("%-8s %-11s %-12s %s\n", p.Name, p.VPNIP, p.Transport, p.State)
+			ice := p.ICEConnState
+			if ice == "" {
+				ice = "—"
+			}
+			fmt.Printf("%-8s %-11s %-12s %-12s %s\n", p.Name, p.VPNIP, p.Transport, ice, p.State)
+			if p.RecoveryState != "" && p.RecoveryState != "stable" {
+				fmt.Printf("         recovery: %s (attempts %d)\n", p.RecoveryState, p.RecoveryAttempts)
+			}
 		}
 	}
 }

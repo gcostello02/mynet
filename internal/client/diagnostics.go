@@ -23,7 +23,10 @@ type Diagnostics struct {
 	Authentication        string
 	CoordinationOK        bool
 	PeerOnline            bool
-	ICEState              string
+	ICEState              string // live ICE agent/transport state when known
+	ICETransportState     string
+	ICENegotiationIdle    bool   // true when runtime has no active session path (VPN global idle)
+	DataPathReady         bool
 	Connection            string
 	TURNUsed              bool
 	LocalType             string
@@ -47,6 +50,11 @@ type Diagnostics struct {
 	TailscaleDataPath     string // No | Yes | Unverified
 	Warnings              []string
 	LastError             string
+	HistoricalLastError   string
+	HistoricalLastErrorAt string
+	LastSuccessAt         string
+	ConnTiming            ConnTimingSnapshot
+	RecoveryCount         int
 	ICESessionID          string
 	WGPeerFingerprint     string
 	WGAllowedIPs          []string
@@ -114,7 +122,6 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.LocalAddr = r.icePath.LocalAddr
 	d.RemoteAddr = r.icePath.RemoteAddr
 	d.RTT = r.lastRTT
-	d.LastError = r.lastErr
 	d.LocalCandidates = append([]icepkg.CandidateInfo(nil), r.lastLocalCandidates...)
 	d.RemoteCandidates = append([]icepkg.CandidateInfo(nil), r.lastRemoteCandidates...)
 	d.LocalCandidateCounts = icepkg.CountCandidates(d.LocalCandidates)
@@ -125,6 +132,23 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.ICEActiveServers = append([]string(nil), r.lastGatherReport.ICEServerURLs...)
 	if r.connState == StateConnected && !r.lastPingAt.IsZero() {
 		d.LastComm = r.lastPingAt.UTC().Format(time.RFC3339)
+	}
+	globalICE := d.ICEState
+	if globalICE == "" || globalICE == "idle" {
+		d.ICENegotiationIdle = true
+	}
+	r.mu.Unlock()
+
+	hist, histAt := r.historicalLastError()
+	if hist != "" {
+		d.HistoricalLastError = hist
+		if !histAt.IsZero() {
+			d.HistoricalLastErrorAt = histAt.UTC().Format(time.RFC3339)
+		}
+	}
+	r.mu.Lock()
+	if !r.lastSuccessAt.IsZero() {
+		d.LastSuccessAt = r.lastSuccessAt.UTC().Format(time.RFC3339)
 	}
 	r.mu.Unlock()
 
@@ -140,7 +164,12 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.TailscaleSignaling, d.TailscaleDataPath = r.tailscaleDependency(d)
 	d.Warnings = append(d.Warnings, tailscalePathWarnings(d)...)
 
+	dataPathReady := false
 	if peerName != "" {
+		if pt, ok := r.PeerConnTiming(peerName); ok {
+			d.ConnTiming = pt.Current
+			d.RecoveryCount = pt.RecoveryCount
+		}
 		r.mu.Lock()
 		if link, ok := r.peerLinks[peerName]; ok && link != nil {
 			d.ICESessionID = link.SessionID
@@ -162,6 +191,23 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 		}
 		r.mu.Unlock()
 
+		if live, ok := r.PeerLinkLivePath(peerName); ok {
+			if live.ConnectionState != "" {
+				d.ICETransportState = live.ConnectionState
+				d.ICEState = live.ConnectionState
+				d.ICENegotiationIdle = false
+			}
+			if live.Connection != "" {
+				d.Connection = live.Connection
+			}
+		}
+		if strings.EqualFold(d.ICETransportState, "connected") {
+			r.mu.Lock()
+			link, ok := r.peerLinks[peerName]
+			dataPathReady = ok && link != nil && link.Conn != nil
+			r.mu.Unlock()
+		}
+
 		peers, err := r.api.Peers()
 		if err != nil {
 			d.Warnings = append(d.Warnings, "peer list: "+err.Error())
@@ -181,7 +227,21 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 		d.CoordinationOK = true
 	}
 
+	d.LastError = r.effectiveLastError(peerName, dataPathReady)
+	d.DataPathReady = dataPathReady
+	if d.ICETransportState == "" && d.ICEState != "" && d.ICEState != "idle" {
+		d.ICETransportState = d.ICEState
+	}
+
 	return d, nil
+}
+
+// PeerConnTiming returns connection-establishment timing for a VPN peer.
+func (r *Runtime) PeerConnTiming(peerName string) (PeerConnTiming, bool) {
+	if r.connTiming == nil {
+		return PeerConnTiming{}, false
+	}
+	return r.connTiming.snapshot(peerName)
 }
 
 func (r *Runtime) tailscaleDependency(d Diagnostics) (signaling, dataPath string) {

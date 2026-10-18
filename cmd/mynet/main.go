@@ -342,7 +342,16 @@ func printDiagnostics(d client.Diagnostics) {
 	}
 	fmt.Println()
 	fmt.Println("ICE:")
-	fmt.Printf("  State:            %s\n", d.ICEState)
+	if d.DataPathReady {
+		fmt.Printf("  Data path:        ready\n")
+	} else if d.ICENegotiationIdle {
+		fmt.Printf("  Negotiation:      idle (no active session on this runtime view)\n")
+	}
+	if d.ICETransportState != "" {
+		fmt.Printf("  Transport state:  %s\n", d.ICETransportState)
+	} else {
+		fmt.Printf("  State:            %s\n", d.ICEState)
+	}
 	if d.ICEGatherDuration > 0 {
 		fmt.Printf("  Gather duration:  %s\n", d.ICEGatherDuration.Round(time.Millisecond))
 	}
@@ -423,7 +432,27 @@ func printDiagnostics(d client.Diagnostics) {
 	fmt.Printf("  Data Path: %s\n", d.TailscaleDataPath)
 	if d.LastError != "" {
 		fmt.Println()
-		fmt.Printf("Last error: %s\n", d.LastError)
+		fmt.Printf("Current error: %s\n", d.LastError)
+	}
+	if d.HistoricalLastError != "" && d.HistoricalLastError != d.LastError {
+		fmt.Printf("Last failure:  %s", d.HistoricalLastError)
+		if d.HistoricalLastErrorAt != "" {
+			fmt.Printf(" (%s)", d.HistoricalLastErrorAt)
+		}
+		fmt.Println()
+	}
+	if d.LastSuccessAt != "" {
+		fmt.Printf("Last success:  %s\n", d.LastSuccessAt)
+	}
+	if d.ConnTiming.LastStage != "" {
+		fmt.Println()
+		fmt.Println("Connection timing (last attempt):")
+		fmt.Printf("  Attempt: %d  session %s\n", d.ConnTiming.Attempt, trimSessionID(d.ConnTiming.SessionID))
+		for _, stage := range client.ConnStageOrder() {
+			if elapsed, ok := d.ConnTiming.Stages[stage]; ok {
+				fmt.Printf("  %-28s %s\n", stage, elapsed.Round(time.Millisecond))
+			}
+		}
 	}
 	if len(d.LocalCandidates) > 0 {
 		fmt.Println()
@@ -446,9 +475,13 @@ func printDiagnostics(d client.Diagnostics) {
 			fmt.Printf("  - %s\n", w)
 		}
 	}
-	if d.LastError != "" {
-		fmt.Printf("\nLast error:      %s\n", d.LastError)
+}
+
+func trimSessionID(s string) string {
+	if len(s) <= 12 {
+		return s
 	}
+	return s[:8] + "…"
 }
 
 func configUsage() {
