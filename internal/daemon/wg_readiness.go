@@ -36,11 +36,13 @@ func observeWireGuardReadiness(ctx context.Context, rt *client.Runtime, engine *
 			rt.MarkConnStage(peerName, sessionID, client.StageWireGuardHandshake)
 			if st.RxBytes > baselineRx || st.TxBytes > baselineTx {
 				rt.MarkConnStage(peerName, sessionID, client.StageVPNDataUsable)
+				rt.NoteVPNReady(peerName)
 				return
 			}
 			// Handshake without app traffic yet still counts as WG ready.
 			if time.Since(st.LastHandshake) < 2*time.Minute {
 				rt.MarkConnStage(peerName, sessionID, client.StageVPNDataUsable)
+				rt.NoteVPNReady(peerName)
 				return
 			}
 		}

@@ -13,7 +13,8 @@ func TestRecoveryTimelineCountsAttemptsAndWallClock(t *testing.T) {
 	rt.noteAttempt("peer")
 	dur := 120 * time.Millisecond
 	time.Sleep(dur)
-	rt.noteSuccess("peer", 2, dur)
+	rt.noteICESuccess("peer", 2, dur)
+	rt.noteVPNReady("peer")
 
 	snap, ok := rt.snapshot("peer")
 	if !ok {
@@ -28,8 +29,11 @@ func TestRecoveryTimelineCountsAttemptsAndWallClock(t *testing.T) {
 	if snap.SuccessfulAttempt != 2 {
 		t.Fatalf("success attempt %d", snap.SuccessfulAttempt)
 	}
-	if snap.TotalToSuccess < dur {
-		t.Fatalf("total to success %v", snap.TotalToSuccess)
+	if snap.TotalToICETransport < dur {
+		t.Fatalf("total to ICE %v", snap.TotalToICETransport)
+	}
+	if snap.TotalToVPNReady <= 0 {
+		t.Fatalf("expected VPN ready timing")
 	}
 }
 

@@ -222,6 +222,9 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 			vpnDataReady = true
 			_ = stage
 		}
+		if d.RecoveryTimeline.TotalToVPNReady > 0 {
+			vpnDataReady = true
+		}
 
 		peers, err := r.api.Peers()
 		if err != nil {
@@ -244,7 +247,7 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 
 	d.LastError = r.effectiveLastError(peerName, dataPathReady)
 	d.DataPathReady = dataPathReady
-	d.VPNDataPathReady = vpnDataReady || dataPathReady && d.WGLastHandshake != ""
+	d.VPNDataPathReady = vpnDataReady
 	if d.ICETransportState == "" && d.ICEState != "" && d.ICEState != "idle" {
 		d.ICETransportState = d.ICEState
 	}

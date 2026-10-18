@@ -59,6 +59,7 @@ func (r *Runtime) ConnectPeerVPNContext(ctx context.Context, peerName string) (*
 	if err := r.waitForSignaling(ctx); err != nil {
 		return nil, err
 	}
+	r.waitPeerOnlineForICE(ctx, peerName)
 	r.mu.Lock()
 	if r.vpnConnecting == nil {
 		r.vpnConnecting = make(map[string]bool)
@@ -119,6 +120,29 @@ func (r *Runtime) ConnectPeerVPNContext(ctx context.Context, peerName string) (*
 
 func (r *Runtime) nextPeerLinkGen() uint64 {
 	return atomic.AddUint64(&r.peerLinkGen, 1)
+}
+
+// waitPeerOnlineForICE reduces credential-timeout races when the remote daemon is still starting.
+func (r *Runtime) waitPeerOnlineForICE(ctx context.Context, peerName string) {
+	deadline := time.Now().Add(12 * time.Second)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return
+		}
+		peers, err := r.api.Peers()
+		if err == nil {
+			for _, p := range peers {
+				if p.Name == peerName && p.Online {
+					return
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 func (r *Runtime) storePeerLink(peerName, sessionID string, conn net.Conn, path icepkg.PathInfo, sess *icepkg.Session) {

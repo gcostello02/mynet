@@ -20,6 +20,8 @@ const (
 	StageDataTransportReady   ConnStage = "data_transport_ready"
 	StageWireGuardHandshake   ConnStage = "wireguard_handshake"
 	StageVPNDataUsable        ConnStage = "vpn_data_usable"
+	StageICEToWireGuard       ConnStage = "ice_to_wireguard_handshake"
+	StageICEToVPNReady        ConnStage = "ice_to_vpn_data_usable"
 	StageRecoveryStarted      ConnStage = "recovery_started"
 	StageRecoveryCompleted    ConnStage = "recovery_completed"
 )
@@ -163,6 +165,19 @@ func (ct *connTiming) markExisting(peer, sessionID string, stage ConnStage) {
 	pt.Current.Stages[stage] = elapsed
 	pt.Current.LastStage = stage
 	pt.Current.LastStageAt = elapsed
+	if stage == StageWireGuardHandshake || stage == StageVPNDataUsable {
+		if iceReady, ok := pt.Current.Stages[StageDataTransportReady]; ok {
+			delta := elapsed - iceReady
+			if delta < 0 {
+				delta = 0
+			}
+			if stage == StageWireGuardHandshake {
+				pt.Current.Stages[StageICEToWireGuard] = delta
+			} else {
+				pt.Current.Stages[StageICEToVPNReady] = delta
+			}
+		}
+	}
 	ct.mu.Unlock()
 }
 
@@ -178,7 +193,9 @@ func ConnStageOrder() []ConnStage {
 		StageICEConnectStarted,
 		StageICEConnected,
 		StageDataTransportReady,
+		StageICEToWireGuard,
 		StageWireGuardHandshake,
+		StageICEToVPNReady,
 		StageVPNDataUsable,
 		StageRecoveryStarted,
 		StageRecoveryCompleted,
