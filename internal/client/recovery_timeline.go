@@ -11,8 +11,13 @@ type RecoveryTimeline struct {
 	CycleStartedAt        time.Time
 	FirstFailureAt        time.Time
 	LastFailureAt         time.Time
-	SuccessAt             time.Time
-	TotalToSuccess        time.Duration
+	ICETransportSuccessAt time.Time
+	VPNReadyAt            time.Time
+	SuccessAt             time.Time // deprecated: same as ICETransportSuccessAt
+	TotalToICETransport   time.Duration
+	TotalToVPNReady       time.Duration
+	ICEToWGHandshake      time.Duration
+	TotalToSuccess        time.Duration // ICE transport only (alias of TotalToICETransport)
 	ICEAttemptsTotal      int
 	ICEAttemptsFailed     int
 	TransportRecoveries   int
@@ -68,17 +73,35 @@ func (rt *recoveryTracker) noteFailure(peer, reason string) {
 	rt.mu.Unlock()
 }
 
-func (rt *recoveryTracker) noteSuccess(peer string, attemptNum int, attemptDuration time.Duration) {
+func (rt *recoveryTracker) noteICESuccess(peer string, attemptNum int, attemptDuration time.Duration) {
 	rt.mu.Lock()
 	t := rt.ensure(peer)
 	now := time.Now()
+	t.ICETransportSuccessAt = now
 	t.SuccessAt = now
 	t.SuccessfulAttempt = attemptNum
 	t.LastSuccessfulAttempt = attemptDuration
 	if !t.CycleStartedAt.IsZero() {
-		t.TotalToSuccess = now.Sub(t.CycleStartedAt)
+		t.TotalToICETransport = now.Sub(t.CycleStartedAt)
+		t.TotalToSuccess = t.TotalToICETransport
 	}
 	t.State = "stable"
+	rt.mu.Unlock()
+}
+
+func (rt *recoveryTracker) noteVPNReady(peer string) {
+	rt.mu.Lock()
+	t := rt.ensure(peer)
+	now := time.Now()
+	if t.VPNReadyAt.IsZero() {
+		t.VPNReadyAt = now
+		if !t.CycleStartedAt.IsZero() {
+			t.TotalToVPNReady = now.Sub(t.CycleStartedAt)
+		}
+		if !t.ICETransportSuccessAt.IsZero() {
+			t.ICEToWGHandshake = now.Sub(t.ICETransportSuccessAt)
+		}
+	}
 	rt.mu.Unlock()
 }
 
@@ -138,12 +161,20 @@ func (r *Runtime) NoteICEAttemptFailed(peer string, reason string) {
 	r.recovery.noteFailure(peer, reason)
 }
 
-// NoteICEAttemptSucceeded records successful recovery timing.
+// NoteICEAttemptSucceeded records ICE transport recovery timing (not full VPN readiness).
 func (r *Runtime) NoteICEAttemptSucceeded(peer string, attemptNum int, attemptDuration time.Duration) {
 	if r.recovery == nil {
 		return
 	}
-	r.recovery.noteSuccess(peer, attemptNum, attemptDuration)
+	r.recovery.noteICESuccess(peer, attemptNum, attemptDuration)
+}
+
+// NoteVPNReady records wall-clock VPN data-path readiness for the current recovery cycle.
+func (r *Runtime) NoteVPNReady(peer string) {
+	if r.recovery == nil {
+		return
+	}
+	r.recovery.noteVPNReady(peer)
 }
 
 // NoteTransportRecovery records ICE transport loss and re-connect scheduling.

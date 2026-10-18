@@ -41,6 +41,7 @@ func (e *PeerEndpoint) DstIP() netip.Addr { return e.VPNIP }
 func (e *PeerEndpoint) SrcIP() netip.Addr { return netip.Addr{} }
 
 type peerTransport struct {
+	gen       uint64
 	conn      net.Conn
 	closed    chan struct{} // closed when readLoop exits (conn dead or replaced)
 	counters  *peerCounters
@@ -51,6 +52,7 @@ type peerTransport struct {
 type ICEBind struct {
 	mu          sync.RWMutex
 	byIP        map[netip.Addr]*peerTransport
+	peerGen     map[netip.Addr]uint64
 	byConn      map[net.Conn]netip.Addr
 	inbound     chan inboundPkt
 	closeSignal chan struct{}
@@ -70,6 +72,7 @@ type inboundPkt struct {
 func NewICEBind() *ICEBind {
 	return &ICEBind{
 		byIP:        make(map[netip.Addr]*peerTransport),
+		peerGen:     make(map[netip.Addr]uint64),
 		byConn:      make(map[net.Conn]netip.Addr),
 		inbound:     make(chan inboundPkt, 256),
 		ipv6Wait:    make(chan []byte),
@@ -85,22 +88,39 @@ func (b *ICEBind) SetPeerConn(vpnIP netip.Addr, c net.Conn) {
 		return
 	}
 	var ctr *peerCounters
+	var prev *peerTransport
 	if old, ok := b.byIP[vpnIP]; ok {
 		if old.conn == c {
 			b.mu.Unlock()
 			return
 		}
 		ctr = old.counters
+		prev = old
 		delete(b.byConn, old.conn)
-		_ = old.conn.Close()
 	} else {
 		ctr = &peerCounters{}
 	}
-	pt := &peerTransport{conn: c, closed: make(chan struct{}), counters: ctr}
+	gen := b.peerGen[vpnIP] + 1
+	b.peerGen[vpnIP] = gen
+	pt := &peerTransport{gen: gen, conn: c, closed: make(chan struct{}), counters: ctr}
 	b.byIP[vpnIP] = pt
 	b.byConn[c] = vpnIP
 	b.mu.Unlock()
+	if prev != nil {
+		_ = prev.conn.Close()
+	}
 	go b.readLoop(vpnIP, pt)
+}
+
+func (b *ICEBind) transportActive(vpnIP netip.Addr, pt *peerTransport) bool {
+	if pt == nil {
+		return false
+	}
+	b.mu.RLock()
+	cur := b.byIP[vpnIP]
+	active := cur != nil && cur.gen == pt.gen
+	b.mu.RUnlock()
+	return active
 }
 
 func (b *ICEBind) RemovePeer(vpnIP netip.Addr) {
@@ -108,6 +128,7 @@ func (b *ICEBind) RemovePeer(vpnIP netip.Addr) {
 	if pt, ok := b.byIP[vpnIP]; ok {
 		delete(b.byIP, vpnIP)
 		delete(b.byConn, pt.conn)
+		b.peerGen[vpnIP]++
 		_ = pt.conn.Close()
 	}
 	b.mu.Unlock()
@@ -180,6 +201,9 @@ func (b *ICEBind) readLoop(vpnIP netip.Addr, pt *peerTransport) {
 	c := pt.conn
 	ep := &PeerEndpoint{VPNIP: vpnIP}
 	for {
+		if !b.transportActive(vpnIP, pt) {
+			return
+		}
 		buf := getPacketBuf()
 		n, err := c.Read(buf)
 		if err != nil {
@@ -189,6 +213,10 @@ func (b *ICEBind) readLoop(vpnIP netip.Addr, pt *peerTransport) {
 		if n == 0 {
 			putPacketBuf(buf)
 			continue
+		}
+		if !b.transportActive(vpnIP, pt) {
+			putPacketBuf(buf)
+			return
 		}
 		pt.counters.recvPackets.Add(1)
 		pt.counters.recvBytes.Add(uint64(n))
@@ -329,6 +357,7 @@ func (b *ICEBind) Shutdown() error {
 		}
 	}
 	b.byIP = make(map[netip.Addr]*peerTransport)
+	b.peerGen = make(map[netip.Addr]uint64)
 	b.byConn = make(map[net.Conn]netip.Addr)
 	b.mu.Unlock()
 
@@ -371,11 +400,17 @@ func (b *ICEBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		}
 		return ErrNoTransport
 	}
+	gen := pt.gen
+	conn := pt.conn
 	for _, buf := range bufs {
 		if len(buf) > maxWGPacket {
 			return fmt.Errorf("packet too large: %d", len(buf))
 		}
-		if _, err := pt.conn.Write(buf); err != nil {
+		if !b.transportActive(pe.VPNIP, pt) {
+			pt.counters.sendNoTransport.Add(1)
+			return ErrNoTransport
+		}
+		if _, err := conn.Write(buf); err != nil {
 			pt.counters.sendErrors.Add(1)
 			terminal, _ := pt.counters.health.recordSendErr(err)
 			if terminal {
@@ -386,6 +421,13 @@ func (b *ICEBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		pt.counters.sendPackets.Add(1)
 		pt.counters.sendBytes.Add(uint64(len(buf)))
 		pt.counters.health.recordSendOK()
+		b.mu.RLock()
+		cur := b.byIP[pe.VPNIP]
+		if cur == nil || cur.gen != gen {
+			b.mu.RUnlock()
+			return ErrNoTransport
+		}
+		b.mu.RUnlock()
 	}
 	return nil
 }

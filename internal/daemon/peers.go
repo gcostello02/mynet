@@ -50,15 +50,20 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 			if bind != nil {
 				bind.SetPeerConn(peerIP, link.Conn)
 			}
+			n.mu.Lock()
+			eng := n.engine
+			n.mu.Unlock()
+			if eng != nil {
+				if err := eng.NudgeHandshake(p.WGPublicKey); err != nil && n.Logger != nil {
+					n.Logger.Debug("wireguard handshake nudge", "peer", p.Name, "err", err)
+				}
+			}
 			livePath, _ := rt.PeerLinkLivePath(p.Name)
 			if livePath.ConnectionState == "" {
 				livePath = link.Path
 			}
 			n.setPeerRecovery(p.Name, iceFailures, transportRecoveries, "stable")
 			n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateTransport, livePath, link.SessionID)
-			n.mu.Lock()
-			eng := n.engine
-			n.mu.Unlock()
 			wgCtx, wgCancel := context.WithTimeout(ctx, 30*time.Second)
 			go func() {
 				observeWireGuardReadiness(wgCtx, rt, eng, p.Name, link.SessionID, p.WGPublicKey)
