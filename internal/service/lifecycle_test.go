@@ -113,8 +113,17 @@ func TestSystemdUnitPassesAnalyzeVerify(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("systemd-analyze on Linux")
 	}
-	u := SystemdUnit("/bin/mynet", "/etc/mynet/client.env")
-	path := filepath.Join(t.TempDir(), "mynet-daemon.service")
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "mynet")
+	if err := os.WriteFile(bin, []byte{0x7f, 'E', 'L', 'F'}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := filepath.Join(dir, "client.env")
+	if err := os.WriteFile(env, []byte("# test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	u := SystemdUnit(bin, env)
+	path := filepath.Join(dir, "mynet-daemon.service")
 	if err := os.WriteFile(path, []byte(u), 0o644); err != nil {
 		t.Fatal(err)
 	}
