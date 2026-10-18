@@ -117,6 +117,8 @@ func (r *Runtime) runOneSignalingSession(ctx context.Context) error {
 	r.wsCancel = cancel
 	r.connState = StateOnline
 	r.reconnectAttempts = 0
+	r.lastWSDisconnect = ""
+	r.signalingReadyAt = time.Now()
 	r.mu.Unlock()
 
 	defer func() {
