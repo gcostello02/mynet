@@ -15,6 +15,15 @@ func TestICETraceHookConcurrentRegisterAndEmit(t *testing.T) {
 		}
 	}
 
+	// Prove hook + emit work on this goroutine before racing register/emit workers.
+	SetICETraceHook(hook)
+	iceTrace("preflight", map[string]string{"phase": "sync"})
+	SetICETraceHook(nil)
+	baseline := calls.Load()
+	if baseline != 1 {
+		t.Fatalf("preflight: expected 1 hook call, got %d", baseline)
+	}
+
 	const workers = 24
 	const iters = 200
 	var wg sync.WaitGroup
@@ -37,7 +46,17 @@ func TestICETraceHookConcurrentRegisterAndEmit(t *testing.T) {
 	}
 	wg.Wait()
 	SetICETraceHook(nil)
-	if calls.Load() == 0 {
-		t.Fatal("expected at least one trace invocation")
+
+	if calls.Load() < baseline {
+		t.Fatalf("calls regressed during stress: %d < %d", calls.Load(), baseline)
+	}
+
+	// Registration must still work after concurrent churn (stress may have invoked hook too).
+	afterStress := calls.Load()
+	SetICETraceHook(hook)
+	iceTrace("postflight", map[string]string{"phase": "sync"})
+	SetICETraceHook(nil)
+	if calls.Load() != afterStress+1 {
+		t.Fatalf("postflight: expected %d hook calls, got %d", afterStress+1, calls.Load())
 	}
 }
