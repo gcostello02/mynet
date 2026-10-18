@@ -90,12 +90,18 @@ find_other_mynet_pids() {
     pid="${line%% *}"
     rest="${line#"$pid "}"
     [[ "$rest" == *"_daemon"* ]] && continue
+    local known=0 p
+    for p in "${PIDS[@]}"; do
+      [[ "$p" == "$pid" ]] && known=1 && break
+    done
+    [[ "$known" -eq 1 ]] && continue
     OTHER_MYNET_PIDS+=("$pid")
-  done < <(pgrep -fl "${repo}/${live}" 2>/dev/null || true)
+  done < <(pgrep -fl "${repo}/${live} " 2>/dev/null || true)
 }
 
 preflight_other_mynet_procs() {
   local repo="$1" live="$2"
+  # PIDS must already be populated by find_mynet_daemon_pids.
   find_other_mynet_pids "$repo" "$live"
   if [[ ${#OTHER_MYNET_PIDS[@]} -gt 0 ]]; then
     die "unexpected mynet processes (not _daemon): ${OTHER_MYNET_PIDS[*]} — resolve before deploy"
