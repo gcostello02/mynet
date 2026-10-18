@@ -36,10 +36,7 @@ func Install(opts InstallOptions) (InstallSpec, error) {
 		}
 		opts.StateDir = sd
 	}
-	if err := config.ValidateStateDirPath(opts.StateDir); err != nil {
-		return InstallSpec{}, err
-	}
-	if err := config.IdentityMustExist(opts.StateDir); err != nil {
+	if err := PreflightInstall(opts.StateDir, opts.BinaryPath); err != nil {
 		return InstallSpec{}, err
 	}
 	if opts.OwnerUser == "" {

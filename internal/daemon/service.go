@@ -48,6 +48,8 @@ func (s *Service) Run() error {
 	s.lock = lock
 	s.startedAt = time.Now()
 	s.shutdown = newShutdownCoordinator()
+	registerActiveService(s)
+	defer unregisterActiveService()
 
 	path := SocketPath(s.StateDir)
 	_ = os.Remove(path)
