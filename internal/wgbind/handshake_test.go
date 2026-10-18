@@ -164,6 +164,75 @@ func TestWireGuardEncryptedPingOverICEBind(t *testing.T) {
 	}
 }
 
+// TestWireGuardHandshakeNudgeAfterICEBind exercises the same wireguard-go entry point
+// used by wgengine.NudgeHandshake after ICE transport is attached.
+func TestWireGuardHandshakeNudgeAfterICEBind(t *testing.T) {
+	ip0 := netip.MustParseAddr("10.77.0.1")
+	ip1 := netip.MustParseAddr("10.77.0.2")
+	bind0, bind1, cleanup := DuplexPairUDP(ip0, ip1)
+	defer cleanup()
+
+	tun0 := tuntest.NewChannelTUN()
+	tun1 := tuntest.NewChannelTUN()
+
+	var key0, key1 device.NoisePrivateKey
+	_, _ = rand.Read(key0[:])
+	_, _ = rand.Read(key1[:])
+	pub0 := wgPub(key0[:])
+	pub1 := wgPub(key1[:])
+
+	dev0 := device.NewDevice(tun0.TUN(), bind0, device.NewLogger(device.LogLevelError, "ice0: "))
+	dev1 := device.NewDevice(tun1.TUN(), bind1, device.NewLogger(device.LogLevelError, "ice1: "))
+
+	base0 := uapi("private_key", hex.EncodeToString(key0[:]))
+	base1 := uapi("private_key", hex.EncodeToString(key1[:]))
+	_ = dev0.IpcSetOperation(bytes.NewBufferString(base0))
+	_ = dev1.IpcSetOperation(bytes.NewBufferString(base1))
+	if err := dev0.Up(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dev1.Up(); err != nil {
+		t.Fatal(err)
+	}
+	peer0 := uapi(
+		"public_key", hex.EncodeToString(pub1),
+		"replace_allowed_ips", "true",
+		"allowed_ip", "10.77.0.2/32",
+		"endpoint", "10.77.0.2:51820",
+		"persistent_keepalive_interval", "25",
+	)
+	peer1 := uapi(
+		"public_key", hex.EncodeToString(pub0),
+		"replace_allowed_ips", "true",
+		"allowed_ip", "10.77.0.1/32",
+		"endpoint", "10.77.0.1:51820",
+		"persistent_keepalive_interval", "25",
+	)
+	_ = dev0.IpcSetOperation(bytes.NewBufferString(peer0))
+	_ = dev1.IpcSetOperation(bytes.NewBufferString(peer1))
+	defer dev0.Close()
+	defer dev1.Close()
+
+	var pk1 device.NoisePublicKey
+	copy(pk1[:], pub1)
+	if p := dev0.LookupPeer(pk1); p == nil {
+		t.Fatal("peer not configured")
+	} else if err := p.SendHandshakeInitiation(false); err != nil {
+		t.Fatal(err)
+	}
+
+	msg := tuntest.Ping(ip0, ip1)
+	tun1.Outbound <- msg
+	select {
+	case recv := <-tun0.Inbound:
+		if !bytes.Equal(msg, recv) {
+			t.Fatal("encrypted ping mismatch after nudge")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout after handshake nudge")
+	}
+}
+
 func uapi(cfg ...string) string {
 	var b bytes.Buffer
 	for i := 0; i < len(cfg); i += 2 {

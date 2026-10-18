@@ -8,7 +8,9 @@ import (
 )
 
 // NudgeHandshake asks wireguard-go to send a handshake initiation for a configured peer.
-// Safe to call after ICE transport attach; no-op if the peer is unknown.
+// Call only while the device is up and after ICE transport attach (see daemon peer worker).
+// wireguard-go enforces RekeyTimeout spacing; retries remain timer-driven.
+// End-to-end coverage: wgbind.TestWireGuardHandshakeNudgeAfterICEBind (-race safe).
 func (e *Engine) NudgeHandshake(publicKeyHex string) error {
 	if e == nil || e.dev == nil {
 		return fmt.Errorf("wireguard engine not ready")

@@ -46,14 +46,13 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 		if iceErr == nil && link != nil {
 			n.mu.Lock()
 			bind := n.bind
+			eng := n.engine
+			running := n.running
 			n.mu.Unlock()
 			if bind != nil {
 				bind.SetPeerConn(peerIP, link.Conn)
 			}
-			n.mu.Lock()
-			eng := n.engine
-			n.mu.Unlock()
-			if eng != nil {
+			if running && eng != nil {
 				if err := eng.NudgeHandshake(p.WGPublicKey); err != nil && n.Logger != nil {
 					n.Logger.Debug("wireguard handshake nudge", "peer", p.Name, "err", err)
 				}
