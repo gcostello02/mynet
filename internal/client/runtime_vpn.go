@@ -199,6 +199,9 @@ func (r *Runtime) PeerLinkStale(peerName string) bool {
 }
 
 func (r *Runtime) failPeerVPN(peerName string, err error) {
+	if err != nil {
+		r.NoteICEAttemptFailed(peerName, err.Error())
+	}
 	r.mu.Lock()
 	ch := r.vpnWait[peerName]
 	r.mu.Unlock()

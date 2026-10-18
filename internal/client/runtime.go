@@ -95,6 +95,7 @@ type Runtime struct {
 	lastGatherReport icepkg.GatherReport
 
 	connTiming *connTiming
+	recovery       *recoveryTracker
 	signalingReadyAt time.Time
 }
 
@@ -118,6 +119,7 @@ func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
 		pendingSignals: make(map[string][]control.WSMessage),
 		incomingICE:    make(map[string]bool),
 		connTiming:     newConnTiming(),
+		recovery:       newRecoveryTracker(),
 	}
 }
 
@@ -449,6 +451,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 	})
 	var attempt *connAttempt
 	if r.vpnMode && peerName != "" && r.connTiming != nil {
+		r.NoteICEAttemptStarted(peerName)
 		attempt = r.connTiming.beginAttempt(peerName, sessionID)
 		r.connTiming.mark(attempt, StagePeerSessionCreated)
 	}
@@ -692,6 +695,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		if attempt != nil {
 			r.connTiming.mark(attempt, StageDataTransportReady)
 			r.connTiming.succeed(attempt)
+			r.NoteICEAttemptSucceeded(peerName, attempt.attempt, time.Since(attempt.start))
 		}
 		r.clearConnErrorForPeer(peerName)
 		return conn, sess, path, nil
@@ -838,22 +842,6 @@ func (r *Runtime) clearSignalHandler(sessionID string) {
 	delete(r.signalHandlers, sessionID)
 	delete(r.pendingSignals, sessionID)
 	r.signalMu.Unlock()
-}
-
-func waitGatherComplete(sig *signalState, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		sig.mu.Lock()
-		local := sig.gatherDone
-		sig.mu.Unlock()
-		if local {
-			// Allow trickle candidates from the peer after our gathering completes.
-			time.Sleep(400 * time.Millisecond)
-			return nil
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	return errors.New("local ICE gathering did not complete")
 }
 
 func boolString(v bool) string {
