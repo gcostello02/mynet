@@ -62,7 +62,7 @@ Manual HTTPS staging: `scripts/m2-staging-acceptance.sh` + local TLS proxy (mkce
 
 `TestJoinThreeDevices` + lifecycle tests: unique device IDs, enroll, auth, VPN register against in-memory coordinator.
 
-**Not exercised in this environment:** real WireGuard/ICE data plane across hosts/namespaces.
+**Real-network harness:** `deploy/staging/` + `docs/m040-m2-real-network-staging.md` (Docker, isolated VPN `10.88.0.0/24`). Operator-run; requires Docker + privileged client containers.
 
 ## 7. Self-hosting
 
