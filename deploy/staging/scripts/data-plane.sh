@@ -22,6 +22,13 @@ wait_vpn() {
 }
 
 for c in client-a client-b client-c; do
+  if [[ -f "${ART}/${c}.failed" ]]; then
+    log "client ${c} failed: $(cat "${ART}/${c}.failed")"
+    exit 1
+  fi
+  if [[ ! -f "${ART}/${c}.vpn-ready" ]]; then
+    log "WARN: ${c} missing vpn-ready marker"
+  fi
   log "Waiting for VPN on $c..."
   wait_vpn "$c" || log "WARN: $c VPN status not confirmed"
 done

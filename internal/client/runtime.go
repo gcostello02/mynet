@@ -42,8 +42,10 @@ type Runtime struct {
 	cfg      config.ClientConfig
 	api      *control.APIClient
 
-	ws       *websocket.Conn
-	wsCancel context.CancelFunc
+	ws         *websocket.Conn
+	wsCancel   context.CancelFunc
+	wsWriteMu  sync.Mutex // serializes all WebSocket writes (gorilla allows one writer)
+	wsGen      uint64     // bumped on each connection swap; writers hold wsWriteMu during I/O
 
 	activeSession        string
 	peerName             string
@@ -244,11 +246,7 @@ func (r *Runtime) ensureWebSocket() error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r.mu.Lock()
-	r.ws = conn
-	r.wsCancel = cancel
-	r.connState = StateOnline
-	r.mu.Unlock()
+	r.replaceSignalingWebSocket(conn, cancel)
 	go r.wsReadLoop(ctx, conn)
 	return nil
 }
@@ -260,17 +258,7 @@ func (r *Runtime) wsReadLoop(ctx context.Context, conn *websocket.Conn) {
 		}
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			r.mu.Lock()
-			r.ws = nil
-			if r.wsCancel != nil {
-				r.wsCancel()
-			}
-			if r.dataConn == nil {
-				if r.connState == StateOnline || r.connState == StateConnecting {
-					r.connState = StateRegistered
-				}
-			}
-			r.mu.Unlock()
+			r.clearSignalingWebSocket(conn)
 			return
 		}
 		var msg control.WSMessage
@@ -930,6 +918,8 @@ func (r *Runtime) Status() (Status, error) {
 }
 
 func (r *Runtime) sendSignal(sessionID string, msg control.WSMessage) error {
+	r.wsWriteMu.Lock()
+	defer r.wsWriteMu.Unlock()
 	r.mu.Lock()
 	ws := r.ws
 	r.mu.Unlock()
@@ -988,14 +978,8 @@ func (r *Runtime) dispatchSignal(msg control.WSMessage) {
 
 // Down closes connections without touching system networking.
 func (r *Runtime) Down() error {
+	r.closeSignalingWebSocket()
 	r.mu.Lock()
-	if r.wsCancel != nil {
-		r.wsCancel()
-	}
-	if r.ws != nil {
-		_ = r.ws.Close()
-		r.ws = nil
-	}
 	if r.dataConn != nil {
 		_ = r.dataConn.Close()
 		r.dataConn = nil

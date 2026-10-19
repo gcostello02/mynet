@@ -109,30 +109,11 @@ func (r *Runtime) runOneSignalingSession(ctx context.Context) error {
 		return err
 	}
 	sessionCtx, cancel := context.WithCancel(ctx)
-	r.mu.Lock()
-	if r.ws != nil {
-		_ = r.ws.Close()
-	}
-	r.ws = conn
-	r.wsCancel = cancel
-	r.connState = StateOnline
-	r.reconnectAttempts = 0
-	r.lastWSDisconnect = ""
-	r.signalingReadyAt = time.Now()
-	r.mu.Unlock()
+	r.replaceSignalingWebSocket(conn, cancel)
 
 	defer func() {
 		cancel()
-		r.mu.Lock()
-		if r.ws == conn {
-			r.ws = nil
-		}
-		if r.dataConn == nil {
-			if r.connState == StateOnline || r.connState == StateConnecting {
-				r.connState = StateRegistered
-			}
-		}
-		r.mu.Unlock()
+		r.clearSignalingWebSocket(conn)
 		_ = conn.Close()
 	}()
 
