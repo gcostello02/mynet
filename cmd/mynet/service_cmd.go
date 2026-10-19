@@ -25,20 +25,25 @@ func cmdService(args []string) {
 		fs := flag.NewFlagSet("service install", flag.ExitOnError)
 		stateDir := fs.String("state-dir", "", "MyNet state directory (default: resolved ~/.mynet)")
 		owner := fs.String("user", "", "identity owner username")
-		bin := fs.String("binary", "", "mynet binary path")
+		bin := fs.String("binary", "", "mynet binary path (candidate to copy on macOS)")
+		systemBin := fs.Bool("system-binary", runtime.GOOS == "darwin", "macOS: install copy into /usr/local/libexec/mynet/mynet")
 		dry := fs.Bool("dry-run", false, "validate only; do not write system files")
 		_ = fs.Parse(rest)
 		spec, err := service.Install(service.InstallOptions{
-			BinaryPath: *bin,
-			StateDir:   *stateDir,
-			OwnerUser:  *owner,
-			DryRun:     *dry,
+			BinaryPath:   *bin,
+			StateDir:     *stateDir,
+			OwnerUser:    *owner,
+			DryRun:       *dry,
+			SystemBinary: *systemBin,
 		})
 		if err != nil {
 			fatal(err)
 		}
 		fmt.Printf("Service install planned/completed (%s)\n", spec.Supervisor)
 		fmt.Printf("  binary:    %s\n", spec.BinaryPath)
+		if spec.SourceBinary != "" && spec.SourceBinary != spec.BinaryPath {
+			fmt.Printf("  candidate: %s\n", spec.SourceBinary)
+		}
 		fmt.Printf("  state dir: %s\n", spec.StateDir)
 		fmt.Printf("  owner:     %s\n", spec.OwnerUser)
 		if *dry {
@@ -74,6 +79,16 @@ func cmdService(args []string) {
 			fatal(err)
 		}
 		fmt.Println("Service restart requested.")
+	case "audit":
+		sd, err := service.ResolveCLIStateDir()
+		if err != nil {
+			fatal(err)
+		}
+		audit := service.CollectInstallAudit(service.LocalSpecPath())
+		fmt.Printf("Supervised binary: %s\n", audit.SupervisedBinary)
+		fmt.Printf("State directory:   %s\n", sd)
+		fmt.Println()
+		fmt.Print(service.FormatSecurityFindings(audit.Findings))
 	case "status":
 		sd, err := service.ResolveCLIStateDir()
 		if err != nil {
@@ -93,7 +108,11 @@ func cmdService(args []string) {
 		}
 	case "upgrade":
 		fs := flag.NewFlagSet("service upgrade", flag.ExitOnError)
-		live := fs.String("live", "bin/mynet", "installed binary path")
+		defaultLive := "bin/mynet"
+		if p := service.ResolveUpgradeLivePath(service.LocalSpecPath()); p != "" {
+			defaultLive = p
+		}
+		live := fs.String("live", defaultLive, "supervised binary path (launchd/systemd)")
 		candidate := fs.String("candidate", "", "new binary path (required)")
 		backup := fs.String("backup", "", "rollback backup path")
 		stageOnly := fs.Bool("stage-only", false, "only copy candidate to .next")
@@ -145,7 +164,8 @@ func binaryVCSRevision(path string) (string, error) {
 func serviceUsage() {
 	fmt.Println(`usage: mynet service <subcommand>
 
-  install   [--state-dir PATH] [--user USER] [--binary PATH] [--dry-run]
+  install   [--state-dir PATH] [--user USER] [--binary PATH] [--system-binary] [--dry-run]
+  audit
   uninstall [--dry-run]
   start | stop | restart   (requires sudo)
   status

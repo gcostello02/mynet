@@ -14,6 +14,7 @@ import (
 type InstallSpec struct {
 	Supervisor   string    `json:"supervisor"` // launchd | systemd
 	BinaryPath   string    `json:"binary_path"`
+	SourceBinary string    `json:"source_binary,omitempty"` // candidate copied from (macOS libexec install)
 	StateDir     string    `json:"state_dir"`
 	OwnerUser    string    `json:"owner_user"`
 	InstalledAt  time.Time `json:"installed_at"`

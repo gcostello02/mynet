@@ -15,10 +15,11 @@ import (
 
 // InstallOptions configures service registration.
 type InstallOptions struct {
-	BinaryPath string
-	StateDir   string
-	OwnerUser  string
-	DryRun     bool
+	BinaryPath   string
+	StateDir     string
+	OwnerUser    string
+	DryRun       bool
+	SystemBinary bool // macOS: copy BinaryPath into /usr/local/libexec/mynet/mynet for launchd
 }
 
 // Install writes service templates and local metadata. Requires root on real hosts.
@@ -37,8 +38,21 @@ func Install(opts InstallOptions) (InstallSpec, error) {
 		}
 		opts.StateDir = sd
 	}
-	if err := PreflightInstall(opts.StateDir, opts.BinaryPath); err != nil {
+	sourceBinary := opts.BinaryPath
+	daemonBinary := opts.BinaryPath
+	if runtime.GOOS == "darwin" && opts.SystemBinary {
+		daemonBinary = DarwinSystemBinaryPath
+		if err := ValidateBinarySource(sourceBinary); err != nil {
+			return InstallSpec{}, err
+		}
+	}
+	if err := PreflightInstall(opts.StateDir, sourceBinary); err != nil {
 		return InstallSpec{}, err
+	}
+	if runtime.GOOS == "darwin" && !opts.SystemBinary {
+		if findings, _ := AuditSupervisedBinaryPath(daemonBinary); hasCritical(findings) {
+			return InstallSpec{}, fmt.Errorf("refusing launchd install with user-writable binary %s — use --system-binary (default on macOS) or pass a root-owned path", daemonBinary)
+		}
 	}
 	if opts.OwnerUser == "" {
 		opts.OwnerUser = config.OwnerUsername()
@@ -55,10 +69,11 @@ func Install(opts InstallOptions) (InstallSpec, error) {
 
 	layout := SystemLayoutForOS()
 	spec := InstallSpec{
-		BinaryPath:  opts.BinaryPath,
-		StateDir:    opts.StateDir,
-		OwnerUser:   opts.OwnerUser,
-		InstalledAt: time.Now().UTC(),
+		BinaryPath:   daemonBinary,
+		SourceBinary: sourceBinary,
+		StateDir:     opts.StateDir,
+		OwnerUser:    opts.OwnerUser,
+		InstalledAt:  time.Now().UTC(),
 	}
 
 	switch runtime.GOOS {
@@ -84,7 +99,12 @@ func Install(opts InstallOptions) (InstallSpec, error) {
 	if err := os.MkdirAll(layout.LogDir, 0o755); err != nil {
 		return InstallSpec{}, err
 	}
-	envBody := EnvFileContents(opts.StateDir, opts.OwnerUser, opts.BinaryPath)
+	if runtime.GOOS == "darwin" && opts.SystemBinary && !opts.DryRun {
+		if err := InstallDarwinSystemBinary(sourceBinary); err != nil {
+			return InstallSpec{}, err
+		}
+	}
+	envBody := EnvFileContents(opts.StateDir, opts.OwnerUser, daemonBinary)
 	if runtime.GOOS == "linux" {
 		if err := os.MkdirAll(layout.SystemdEnvDir, 0o755); err != nil {
 			return InstallSpec{}, err
@@ -92,14 +112,14 @@ func Install(opts InstallOptions) (InstallSpec, error) {
 		if err := writeFileAtomic(layout.SystemdEnvFile, envBody, 0o600); err != nil {
 			return InstallSpec{}, err
 		}
-		unit := SystemdUnit(opts.BinaryPath, layout.SystemdEnvFile)
+		unit := SystemdUnit(daemonBinary, layout.SystemdEnvFile)
 		if err := writeFileAtomic(layout.SystemdUnit, unit, 0o644); err != nil {
 			return InstallSpec{}, err
 		}
 		_ = exec.Command("systemctl", "daemon-reload").Run()
 	} else if runtime.GOOS == "darwin" {
 		logPath := filepath.Join(layout.LogDir, "daemon.log")
-		plist := LaunchDaemonPlist(opts.BinaryPath, opts.StateDir, opts.OwnerUser, logPath)
+		plist := LaunchDaemonPlist(daemonBinary, opts.StateDir, opts.OwnerUser, logPath)
 		if err := writeFileAtomic(layout.LaunchDaemonPlist, plist, 0o644); err != nil {
 			return InstallSpec{}, err
 		}

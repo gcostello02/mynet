@@ -45,12 +45,16 @@ func TestInstallDryRun(t *testing.T) {
 	if err := os.WriteFile(bin, []byte{0x7f, 'E', 'L', 'F'}, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	spec, err := Install(InstallOptions{
+	opts := InstallOptions{
 		BinaryPath: bin,
 		StateDir:   state,
 		OwnerUser:  os.Getenv("USER"),
 		DryRun:     true,
-	})
+	}
+	if runtime.GOOS == "darwin" {
+		opts.SystemBinary = true
+	}
+	spec, err := Install(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
