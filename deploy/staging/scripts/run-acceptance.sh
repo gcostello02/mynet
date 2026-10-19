@@ -2,7 +2,9 @@
 # Operator-reviewed M2 real-network staging. Does NOT modify production mesh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+# shellcheck source=lib-compose.sh
+source "${ROOT}/scripts/lib-compose.sh"
+staging_compose_init "$ROOT"
 
 if [[ "${MYNET_STAGING_I_UNDERSTAND:-}" != "1" ]]; then
   cat <<'EOF'
@@ -17,9 +19,10 @@ EOF
   exit 1
 fi
 
-export COMPOSE_PROJECT_NAME=mynet-m2-staging
-export MYNET_SERVER_SECRET="${MYNET_SERVER_SECRET:-$(openssl rand -base64 32 | tr -d '\n')}"
-export MYNET_ENROLLMENT_SECRET="${MYNET_ENROLLMENT_SECRET:-staging-enrollment-secret-not-for-prod}"
+mkdir -p "${ROOT}/artifacts"
+trap 'echo "acceptance failed at $(date -u +%Y-%m-%dT%H:%M:%SZ); see artifacts/last-error.txt" | tee "${ROOT}/artifacts/last-error.txt"' ERR
+
+staging_load_server_secret "$ROOT"
 
 "${ROOT}/scripts/gen-ca.sh"
 docker compose build

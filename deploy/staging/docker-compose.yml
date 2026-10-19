@@ -34,6 +34,20 @@ services:
       timeout: 2s
       retries: 30
 
+  # One-off admin / join-prep commands: docker compose run --rm admin-toolbox ...
+  admin-toolbox:
+    image: mynet-staging:latest
+    entrypoint: ["/bin/bash"]
+    environment:
+      MYNET_STATE_DIR: /admin-state
+    volumes:
+      - ./admin-state:/admin-state
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
+    networks:
+      - staging
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+
   proxy:
     image: caddy:2-alpine
     depends_on:
