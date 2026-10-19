@@ -44,6 +44,7 @@ services:
       MYNET_STATE_DIR: /admin-state
     volumes:
       - ./admin-state:/admin-state
+      - ./artifacts:/artifacts:ro
       - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
     networks:
       - staging
