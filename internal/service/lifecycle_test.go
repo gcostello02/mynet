@@ -60,6 +60,17 @@ func TestPreflightInstallRejectsSymlinkState(t *testing.T) {
 	}
 }
 
+func TestPreflightInstallRequiresExistingIdentity(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "mynet")
+	if err := os.WriteFile(bin, []byte{0x7f, 'E', 'L', 'F'}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := PreflightInstall(dir, bin); err == nil {
+		t.Fatal("expected error without identity.json")
+	}
+}
+
 func TestPreflightInstallBinaryChecks(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "identity.json"), []byte(`x`), 0o600); err != nil {
