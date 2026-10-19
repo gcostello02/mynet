@@ -12,30 +12,48 @@ import (
 
 // HealthReport aggregates supervisor, daemon, and VPN readiness.
 type HealthReport struct {
-	Supervisor       string
-	Installed        bool
-	SystemUnitPresent bool
-	EnabledHint      string
-	RunningHint      string
-	StateDir         string
-	DaemonReachable  bool
-	DaemonStatus     *daemon.Status
-	VPNDataReady     bool
-	LastError        string
+	Supervisor          string
+	Installed           bool // supervised install: local metadata and/or system unit
+	LocalSpecPresent    bool
+	LocalSpecReadable   bool
+	SystemUnitPresent   bool
+	SupervisorActive    bool
+	SupervisorActiveKnown bool
+	BootAutostartEnabled bool
+	BootAutostartKnown  bool
+	EnabledHint         string
+	RunningHint         string
+	StateDir            string
+	DaemonReachable     bool
+	DaemonStatus        *daemon.Status
+	VPNDataReady        bool
+	LastError           string
 }
 
 func CollectHealth(stateDir, localSpecPath string) HealthReport {
 	layout := SystemLayoutForOS()
-	spec, hasSpec, _ := LoadLocalSpec(localSpecPath)
-	hr := HealthReport{
-		StateDir:          stateDir,
-		Installed:         hasSpec,
-		SystemUnitPresent: SystemUnitInstalled(layout),
-		DaemonReachable:   daemon.DaemonReachable(stateDir),
+	specPresent, specReadable, _ := localSpecPresence(localSpecPath)
+	var spec InstallSpec
+	if specReadable {
+		spec, _, _ = LoadLocalSpec(localSpecPath)
 	}
-	if hasSpec {
+	systemUnit := SystemUnitInstalled(layout)
+	hr := HealthReport{
+		StateDir:            stateDir,
+		LocalSpecPresent:    specPresent,
+		LocalSpecReadable:   specReadable,
+		SystemUnitPresent:   systemUnit,
+		Installed:           specPresent || systemUnit,
+		DaemonReachable:     daemon.DaemonReachable(stateDir),
+	}
+	if specReadable && spec.Supervisor != "" {
 		hr.Supervisor = spec.Supervisor
 	}
+	active, bootEnabled, activeKnown, bootKnown := probeSupervisor(layout)
+	hr.SupervisorActive = active
+	hr.SupervisorActiveKnown = activeKnown
+	hr.BootAutostartEnabled = bootEnabled
+	hr.BootAutostartKnown = bootKnown
 	switch runtime.GOOS {
 	case "darwin":
 		hr.Supervisor = "launchd"
@@ -84,12 +102,20 @@ func platformRunningHint(layout SystemLayout) string {
 func FormatHealth(hr HealthReport) string {
 	var b string
 	b += fmt.Sprintf("Supervisor:      %s\n", hr.Supervisor)
-	b += fmt.Sprintf("Service installed: %v (system unit present: %v)\n", hr.Installed, hr.SystemUnitPresent)
-	if hr.EnabledHint != "" {
-		b += fmt.Sprintf("Enabled hint:    %s\n", hr.EnabledHint)
+	b += fmt.Sprintf("Service installed: %v\n", hr.Installed)
+	b += fmt.Sprintf("  local metadata:  present=%v readable=%v\n", hr.LocalSpecPresent, hr.LocalSpecReadable)
+	b += fmt.Sprintf("  system unit:     present=%v\n", hr.SystemUnitPresent)
+	if hr.SupervisorActiveKnown {
+		b += fmt.Sprintf("  supervisor run:  %v\n", hr.SupervisorActive)
 	}
-	if hr.RunningHint != "" {
-		b += fmt.Sprintf("Running hint:    %s\n", hr.RunningHint)
+	if hr.BootAutostartKnown {
+		b += fmt.Sprintf("  boot autostart:  %v\n", hr.BootAutostartEnabled)
+	}
+	if hr.EnabledHint != "" && !hr.BootAutostartKnown {
+		b += fmt.Sprintf("Boot autostart hint: %s\n", hr.EnabledHint)
+	}
+	if hr.RunningHint != "" && !hr.SupervisorActiveKnown {
+		b += fmt.Sprintf("Supervisor run hint: %s\n", hr.RunningHint)
 	}
 	b += fmt.Sprintf("State directory: %s\n", hr.StateDir)
 	b += fmt.Sprintf("Daemon IPC:      %v\n", hr.DaemonReachable)

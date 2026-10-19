@@ -429,16 +429,17 @@ func printDiagnostics(d client.Diagnostics) {
 				d.RecoveryState, d.ICEFailedAttempts, d.TransportRecoveries)
 		}
 		if d.RecoveryTimeline.CycleStartedAt.IsZero() == false {
+			attempts, successN := d.RecoveryTimeline.CoherentAttemptCounts()
 			if d.RecoveryTimeline.TotalToICETransport > 0 {
-				fmt.Printf("  ICE recovery:    %s (%d ICE attempts, transport on #%d)\n",
+				fmt.Printf("  ICE recovery:    %s (%d ICE attempts this cycle, transport on #%d)\n",
 					d.RecoveryTimeline.TotalToICETransport.Round(time.Millisecond),
-					d.RecoveryTimeline.ICEAttemptsTotal,
-					d.RecoveryTimeline.SuccessfulAttempt)
+					attempts,
+					successN)
 			} else if d.RecoveryTimeline.TotalToSuccess > 0 {
-				fmt.Printf("  ICE recovery:    %s (%d ICE attempts, transport on #%d)\n",
+				fmt.Printf("  ICE recovery:    %s (%d ICE attempts this cycle, transport on #%d)\n",
 					d.RecoveryTimeline.TotalToSuccess.Round(time.Millisecond),
-					d.RecoveryTimeline.ICEAttemptsTotal,
-					d.RecoveryTimeline.SuccessfulAttempt)
+					attempts,
+					successN)
 			}
 			if d.RecoveryTimeline.ICEToWGHandshake > 0 {
 				fmt.Printf("  ICE→WG delay:    %s\n", d.RecoveryTimeline.ICEToWGHandshake.Round(time.Millisecond))
