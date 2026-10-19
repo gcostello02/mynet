@@ -27,7 +27,13 @@ for c in client-a client-b client-c; do
     exit 1
   fi
   if [[ ! -f "${ART}/${c}.vpn-ready" ]]; then
-    log "WARN: ${c} missing vpn-ready marker"
+    log "WARN: ${c} missing vpn-ready marker (container may still be starting)"
+    continue
+  fi
+  if docker compose ps --status running --services 2>/dev/null | grep -qx "$c"; then
+    if ! docker compose exec -T "$c" test -f "/artifacts/${c}.vpn-ready" 2>/dev/null; then
+      log "WARN: ${c} host marker present but missing inside container"
+    fi
   fi
   log "Waiting for VPN on $c..."
   wait_vpn "$c" || log "WARN: $c VPN status not confirmed"

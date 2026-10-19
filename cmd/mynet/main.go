@@ -518,8 +518,10 @@ func printDiagnostics(d client.Diagnostics) {
 		fmt.Println("Connection timing (last attempt):")
 		fmt.Printf("  Attempt: %d  session %s\n", d.ConnTiming.Attempt, trimSessionID(d.ConnTiming.SessionID))
 		for _, stage := range client.ConnStageOrder() {
-			if elapsed, ok := d.ConnTiming.Stages[stage]; ok {
+			if elapsed, ok := d.ConnTiming.Stages[stage]; ok && client.ConnStageDurationOK(elapsed) {
 				fmt.Printf("  %-28s %s\n", stage, elapsed.Round(time.Millisecond))
+			} else if ok {
+				fmt.Printf("  %-28s %s\n", stage, "n/a")
 			}
 		}
 	}
