@@ -65,6 +65,14 @@ func newConnTiming() *connTiming {
 	return &connTiming{peers: make(map[string]*PeerConnTiming)}
 }
 
+func (ct *connTiming) resetPeerCycle(peer string) {
+	ct.mu.Lock()
+	if pt, ok := ct.peers[peer]; ok && pt != nil {
+		pt.Current = ConnTimingSnapshot{}
+	}
+	ct.mu.Unlock()
+}
+
 func (ct *connTiming) beginAttempt(peer, sessionID string) *connAttempt {
 	ct.mu.Lock()
 	pt, ok := ct.peers[peer]

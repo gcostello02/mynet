@@ -35,9 +35,11 @@ func newRecoveryTracker() *recoveryTracker {
 	return &recoveryTracker{peers: make(map[string]*RecoveryTimeline)}
 }
 
-func (rt *recoveryTracker) beginCycle(peer string) {
+// beginCycle starts or continues a recovery wall-clock cycle. Returns true when a prior stable cycle was reset.
+func (rt *recoveryTracker) beginCycle(peer string) bool {
 	rt.mu.Lock()
 	t := rt.peers[peer]
+	reset := false
 	if t == nil {
 		t = &RecoveryTimeline{State: "recovering"}
 		rt.peers[peer] = t
@@ -45,11 +47,13 @@ func (rt *recoveryTracker) beginCycle(peer string) {
 	if t.State == "stable" && !t.SuccessAt.IsZero() {
 		t = &RecoveryTimeline{State: "recovering", CycleStartedAt: time.Now()}
 		rt.peers[peer] = t
+		reset = true
 	} else if t.CycleStartedAt.IsZero() {
 		t.CycleStartedAt = time.Now()
 		t.State = "recovering"
 	}
 	rt.mu.Unlock()
+	return reset
 }
 
 func (rt *recoveryTracker) noteAttempt(peer string) {
@@ -77,9 +81,19 @@ func (rt *recoveryTracker) noteICESuccess(peer string, attemptNum int, attemptDu
 	rt.mu.Lock()
 	t := rt.ensure(peer)
 	now := time.Now()
+	if attemptNum > 0 && t.ICEAttemptsTotal < attemptNum {
+		t.ICEAttemptsTotal = attemptNum
+	}
+	if t.ICEAttemptsTotal == 0 && attemptNum > 0 {
+		t.ICEAttemptsTotal = attemptNum
+	}
+	if t.ICEAttemptsTotal > 0 && attemptNum > t.ICEAttemptsTotal {
+		t.SuccessfulAttempt = t.ICEAttemptsTotal
+	} else if attemptNum > 0 {
+		t.SuccessfulAttempt = attemptNum
+	}
 	t.ICETransportSuccessAt = now
 	t.SuccessAt = now
-	t.SuccessfulAttempt = attemptNum
 	t.LastSuccessfulAttempt = attemptDuration
 	if !t.CycleStartedAt.IsZero() {
 		t.TotalToICETransport = now.Sub(t.CycleStartedAt)
@@ -109,20 +123,39 @@ func (rt *recoveryTracker) noteTransportRecovery(peer string) {
 	rt.mu.Lock()
 	t := rt.peers[peer]
 	if t != nil && t.State == "stable" && !t.SuccessAt.IsZero() {
+		prev := t.TransportRecoveries
 		t = &RecoveryTimeline{
-			State:          "recovering",
-			CycleStartedAt: time.Now(),
+			State:               "recovering",
+			CycleStartedAt:      time.Now(),
+			TransportRecoveries: prev + 1,
 		}
 		rt.peers[peer] = t
-	} else {
-		t = rt.ensure(peer)
-		if t.CycleStartedAt.IsZero() {
-			t.CycleStartedAt = time.Now()
-		}
+		rt.mu.Unlock()
+		return
+	}
+	t = rt.ensure(peer)
+	if t.CycleStartedAt.IsZero() {
+		t.CycleStartedAt = time.Now()
 	}
 	t.TransportRecoveries++
 	t.State = "recovering"
 	rt.mu.Unlock()
+}
+
+// CoherentAttemptCounts returns cycle attempt total and success index for diagnostics.
+func (t RecoveryTimeline) CoherentAttemptCounts() (total int, successIndex int) {
+	total = t.ICEAttemptsTotal
+	successIndex = t.SuccessfulAttempt
+	if total == 0 && successIndex > 0 {
+		total = successIndex
+	}
+	if successIndex > total {
+		successIndex = total
+	}
+	if total > 0 && successIndex == 0 {
+		successIndex = total
+	}
+	return total, successIndex
 }
 
 func (rt *recoveryTracker) snapshot(peer string) (RecoveryTimeline, bool) {
@@ -151,7 +184,9 @@ func (r *Runtime) BeginPeerRecoveryCycle(peer string) {
 	if r.recovery == nil {
 		return
 	}
-	r.recovery.beginCycle(peer)
+	if r.recovery.beginCycle(peer) {
+		r.resetPeerConnTimingCycle(peer)
+	}
 }
 
 // NoteICEAttemptStarted increments total ICE attempts for recovery metrics.
@@ -192,6 +227,14 @@ func (r *Runtime) NoteTransportRecovery(peer string) {
 		return
 	}
 	r.recovery.noteTransportRecovery(peer)
+	r.resetPeerConnTimingCycle(peer)
+}
+
+func (r *Runtime) resetPeerConnTimingCycle(peerName string) {
+	if r.connTiming == nil || peerName == "" {
+		return
+	}
+	r.connTiming.resetPeerCycle(peerName)
 }
 
 // PeerRecoveryTimeline returns recovery wall-clock metrics for diagnostics.

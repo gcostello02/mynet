@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/gcostello02/mynet/internal/config"
@@ -109,7 +110,26 @@ func Install(opts InstallOptions) (InstallSpec, error) {
 	if err := SaveLocalSpec(localPath, spec); err != nil {
 		return InstallSpec{}, err
 	}
+	if err := chownPathToUser(localPath, opts.OwnerUser); err != nil {
+		return InstallSpec{}, err
+	}
 	return spec, nil
+}
+
+func chownPathToUser(path, owner string) error {
+	u, err := user.Lookup(owner)
+	if err != nil {
+		return err
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(u.Gid)
+	if err != nil {
+		return err
+	}
+	return os.Chown(path, uid, gid)
 }
 
 func LocalSpecPathForOwner(owner string) string {
