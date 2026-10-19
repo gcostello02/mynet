@@ -4,14 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/grantcostello/mynet/internal/config"
 	"github.com/grantcostello/mynet/internal/control"
 	"github.com/grantcostello/mynet/internal/identity"
 	"github.com/grantcostello/mynet/internal/invitation"
 	"github.com/grantcostello/mynet/internal/join"
+	"github.com/grantcostello/mynet/internal/wgkeys"
 )
+
+// JoinRecoveryHint is printed when join fails mid-flight.
+const JoinRecoveryHint = "If enrollment may have succeeded, run: mynet login (legacy) or re-join with a new invitation; do not share the invitation."
 
 // JoinOptions configures secure network join.
 type JoinOptions struct {
@@ -34,10 +37,12 @@ func (r *Runtime) Join(inv invitation.Invite, opts JoinOptions) error {
 	}
 	idPath := config.IdentityPath(r.StateDir)
 	if _, err := os.Stat(idPath); err == nil && !opts.Force {
-		return fmt.Errorf("device identity already exists at %s (use --force to replace or join is single-network only in V0.4)", idPath)
+		return fmt.Errorf("device identity already exists (use --force to replace; V0.4 supports one network per device)")
 	}
 	if opts.Force {
 		_ = os.Remove(idPath)
+		_ = config.ClearSessionToken(r.StateDir)
+		_ = wgkeys.Clear(r.StateDir)
 	}
 	id, err := identity.Generate(name)
 	if err != nil {
@@ -52,7 +57,10 @@ func (r *Runtime) Join(inv invitation.Invite, opts JoinOptions) error {
 	cfg.CoordinatorFingerprint = inv.CoordinatorFingerprint
 	cfg.CoordinatorPublicKey = inv.CoordinatorPublicKey
 	if cfg.CoordinatorPublicKey == "" {
-		api := control.NewSecureAPIClient(inv.ServerURL)
+		api, err := control.NewSecureAPIClient(inv.ServerURL)
+		if err != nil {
+			return err
+		}
 		pub, err := api.NetworkPublic()
 		if err != nil {
 			return err
@@ -64,21 +72,42 @@ func (r *Runtime) Join(inv invitation.Invite, opts JoinOptions) error {
 	}
 	r.identity = id
 	r.cfg = cfg
-	r.api = control.NewSecureAPIClient(inv.ServerURL)
-
-	if err := r.api.EnrollWithInvitation(id, inv.EnrollmentToken, inv.CoordinatorFingerprint); err != nil {
-		if strings.Contains(err.Error(), "409") || strings.Contains(err.Error(), "already") {
-			// Device may already be enrolled; continue to auth.
-		} else {
-			return fmt.Errorf("enroll: %w", err)
-		}
+	api, err := control.NewSecureAPIClient(inv.ServerURL)
+	if err != nil {
+		return err
 	}
+	r.api = api
+
+	enrollErr := r.api.EnrollWithInvitation(id, inv.EnrollmentToken, inv.CoordinatorFingerprint)
+	if enrollErr != nil {
+		if control.IsHTTPStatus(enrollErr, 409) {
+			// 409 alone does not mean success; only continue if this device authenticates.
+			if err := r.authenticateAfterEnroll(id); err != nil {
+				return fmt.Errorf("enroll conflict and authentication failed: %w (%s)", err, JoinRecoveryHint)
+			}
+			if _, err := r.RegisterVPN(); err != nil {
+				return fmt.Errorf("vpn register: %w (%s)", err, JoinRecoveryHint)
+			}
+			return nil
+		}
+		return fmt.Errorf("enroll failed: %w (%s)", enrollErr, JoinRecoveryHint)
+	}
+	if err := r.authenticateAfterEnroll(id); err != nil {
+		return fmt.Errorf("auth failed: %w (%s)", err, JoinRecoveryHint)
+	}
+	if _, err := r.RegisterVPN(); err != nil {
+		return fmt.Errorf("vpn register: %w (%s)", err, JoinRecoveryHint)
+	}
+	return nil
+}
+
+func (r *Runtime) authenticateAfterEnroll(id *identity.DeviceIdentity) error {
 	resp, err := r.api.Auth(id)
 	if err != nil {
 		if isRevokedOrDenied(err) {
 			_ = config.ClearSessionToken(r.StateDir)
 		}
-		return fmt.Errorf("auth: %w", err)
+		return err
 	}
 	if err := config.SaveSessionToken(r.StateDir, config.SessionToken{
 		Token:     resp.Token,
@@ -89,9 +118,6 @@ func (r *Runtime) Join(inv invitation.Invite, opts JoinOptions) error {
 	r.mu.Lock()
 	r.connState = StateRegistered
 	r.mu.Unlock()
-	if _, err := r.RegisterVPN(); err != nil {
-		return fmt.Errorf("vpn register: %w", err)
-	}
 	return nil
 }
 
@@ -99,8 +125,7 @@ func isRevokedOrDenied(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, "401") || strings.Contains(s, "403") || strings.Contains(s, "revoked")
+	return control.IsHTTPStatus(err, 401) || control.IsHTTPStatus(err, 403)
 }
 
 // ClearDeviceSession removes device bearer credentials after revocation.

@@ -3,17 +3,17 @@ package daemon
 import (
 	"context"
 	"net/netip"
-	"strings"
 	"time"
 
 	"github.com/grantcostello/mynet/internal/control"
 )
 
-const vpnReconcileInterval = 45 * time.Second
+// VPNReconcileInterval is how often the daemon refreshes authoritative peer config.
+const VPNReconcileInterval = 45 * time.Second
 
 func (n *Node) startVPNReconcile(ctx context.Context) {
 	go func() {
-		ticker := time.NewTicker(vpnReconcileInterval)
+		ticker := time.NewTicker(VPNReconcileInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -27,6 +27,11 @@ func (n *Node) startVPNReconcile(ctx context.Context) {
 }
 
 func (n *Node) reconcileVPNPeers() {
+	if !n.reconcileMu.TryLock() {
+		return
+	}
+	defer n.reconcileMu.Unlock()
+
 	n.mu.Lock()
 	rt := n.rt
 	engine := n.engine
@@ -40,14 +45,21 @@ func (n *Node) reconcileVPNPeers() {
 	cfg, err := rt.APIClient().VPNConfig()
 	if err != nil {
 		if isAuthAPIError(err) {
-			n.Logger.Info("vpn config refresh denied; clearing device session", "err", err)
+			if n.Logger != nil {
+				n.Logger.Info("vpn config refresh denied; clearing device session")
+			}
 			_ = rt.ClearDeviceSession()
+		} else if n.Logger != nil {
+			n.Logger.Debug("vpn config refresh failed; keeping existing peers", "err", err)
 		}
 		return
 	}
 
-	want := make(map[string]control.VPNPeerConfig, len(cfg.Peers))
+	want := make(map[string]control.VPNPeerConfig)
 	for _, p := range cfg.Peers {
+		if p.Name == "" || p.WGPublicKey == "" || p.VPNIPv4 == "" || len(p.WGPublicKey) != 64 {
+			continue
+		}
 		want[p.Name] = p
 	}
 
@@ -67,7 +79,7 @@ func (n *Node) reconcileVPNPeers() {
 			delete(n.peers, name)
 			n.mu.Unlock()
 			if n.Logger != nil {
-				n.Logger.Info("removed revoked or unknown vpn peer", "peer", name)
+				n.Logger.Info("removed vpn peer not in coordinator config", "peer", name)
 			}
 		}
 	}
@@ -80,8 +92,10 @@ func (n *Node) reconcileVPNPeers() {
 		if tunMgr != nil {
 			_ = tunMgr.AddPeerRoute(peerIP)
 		}
-		if err := engine.SetPeer(p.WGPublicKey, peerIP, p.VPNIPv4+"/32"); err != nil && n.Logger != nil {
-			n.Logger.Debug("reconcile add peer", "peer", p.Name, "err", err)
+		if err := engine.SetPeer(p.WGPublicKey, peerIP, p.VPNIPv4+"/32"); err != nil {
+			if n.Logger != nil {
+				n.Logger.Debug("reconcile add peer", "peer", p.Name, "err", err)
+			}
 			continue
 		}
 		n.mu.Lock()
@@ -94,6 +108,5 @@ func isAuthAPIError(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, "401") || strings.Contains(s, "403") || strings.Contains(s, "revoked")
+	return control.IsHTTPStatus(err, 401) || control.IsHTTPStatus(err, 403)
 }

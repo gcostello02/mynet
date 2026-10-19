@@ -3,6 +3,7 @@ package join
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,15 +13,23 @@ import (
 
 const proofSkew = 5 * time.Minute
 
+var (
+	ErrProofDowngrade = errors.New("coordinator did not return challenge-bound proof v2")
+	ErrProofInvalid   = errors.New("coordinator proof signature invalid")
+)
+
 // VerifyCoordinator checks invitation pins against live coordinator metadata and proof.
 func VerifyCoordinator(inv invitation.Invite) error {
-	api := control.NewSecureAPIClient(inv.ServerURL)
+	api, err := control.NewSecureAPIClient(inv.ServerURL)
+	if err != nil {
+		return err
+	}
 	pub, err := api.NetworkPublic()
 	if err != nil {
 		return fmt.Errorf("fetch network public metadata: %w", err)
 	}
 	if pub.NetworkID != inv.NetworkID {
-		return fmt.Errorf("network_id mismatch: invitation %q, coordinator %q", inv.NetworkID, pub.NetworkID)
+		return fmt.Errorf("network_id mismatch")
 	}
 	if !fingerprintEqual(pub.CoordinatorFingerprint, inv.CoordinatorFingerprint) {
 		return fmt.Errorf("coordinator fingerprint mismatch")
@@ -41,18 +50,20 @@ func VerifyCoordinator(inv invitation.Invite) error {
 	if err != nil {
 		return fmt.Errorf("coordinator proof: %w", err)
 	}
+	if proof.ProofVersion < 2 {
+		return ErrProofDowngrade
+	}
 	if proof.Challenge != challengeB64 {
 		return fmt.Errorf("coordinator proof challenge mismatch")
 	}
 	if proof.NetworkID != inv.NetworkID || !fingerprintEqual(proof.CoordinatorFingerprint, inv.CoordinatorFingerprint) {
 		return fmt.Errorf("coordinator proof metadata mismatch")
 	}
-	if proof.ProofVersion >= 2 {
-		if !control.VerifyCoordinatorProofV2(proof.NetworkID, proof.CoordinatorFingerprint, proof.Challenge, proof.CoordinatorPublicKey, proof.Timestamp, proof.Signature, proofSkew) {
-			return fmt.Errorf("coordinator proof signature invalid")
-		}
-	} else if !control.VerifyCoordinatorProof(proof.NetworkID, proof.CoordinatorFingerprint, proof.CoordinatorPublicKey, proof.Timestamp, proof.Signature, proofSkew) {
-		return fmt.Errorf("coordinator proof signature invalid")
+	if proof.CoordinatorPublicKey != pinnedPub {
+		return fmt.Errorf("coordinator proof public key mismatch")
+	}
+	if !control.VerifyCoordinatorProofV2(proof.NetworkID, proof.CoordinatorFingerprint, proof.Challenge, pinnedPub, proof.Timestamp, proof.Signature, proofSkew) {
+		return ErrProofInvalid
 	}
 	return nil
 }

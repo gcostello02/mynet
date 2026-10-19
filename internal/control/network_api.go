@@ -3,10 +3,7 @@ package control
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/grantcostello/mynet/internal/identity"
@@ -30,31 +27,6 @@ type NetworkProofResponse struct {
 	Challenge              string `json:"challenge,omitempty"`
 	Signature              string `json:"signature"`
 	ProofVersion           int    `json:"proof_version"`
-}
-
-// NewSecureAPIClient creates a client that requires HTTPS and rejects redirect host changes.
-func NewSecureAPIClient(baseURL string) *APIClient {
-	u := strings.TrimRight(baseURL, "/")
-	parsed, _ := url.Parse(u)
-	c := &APIClient{
-		BaseURL: u,
-		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 1 && req.URL.Host != via[0].URL.Host {
-					return fmt.Errorf("redirect to untrusted host blocked")
-				}
-				if req.URL.Scheme != "https" {
-					return fmt.Errorf("redirect to non-https blocked")
-				}
-				return nil
-			},
-		},
-	}
-	if parsed != nil && parsed.Scheme != "https" {
-		c.BaseURL = u // invitation validate already requires https
-	}
-	return c
 }
 
 func (c *APIClient) NetworkPublic() (NetworkPublicResponse, error) {
