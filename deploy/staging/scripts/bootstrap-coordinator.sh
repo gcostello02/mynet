@@ -25,18 +25,19 @@ if docker compose exec -T coordinator curl -sf http://127.0.0.1:8080/v1/network/
   exit 0
 fi
 
-tmp="$(mktemp)"
-code="$(docker compose exec -T coordinator curl -s -o "$tmp" -w '%{http_code}' -X POST http://127.0.0.1:8080/v1/admin/setup \
+# Body must be read from curl stdout inside the container (host mktemp paths are not visible in exec).
+raw="$(docker compose exec -T coordinator curl -s -w $'\n__HTTP_STATUS__%{http_code}\n' -X POST http://127.0.0.1:8080/v1/admin/setup \
   -H 'Content-Type: application/json' \
   -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\",\"network_display_name\":\"m2-staging\",\"public_server_url\":\"${COORD_URL}\"}")"
-body="$(cat "$tmp")"
-rm -f "$tmp"
+code="$(echo "$raw" | tail -1 | sed 's/__HTTP_STATUS__//')"
+body="$(echo "$raw" | sed '$d')"
 
 case "$code" in
   201)
-    echo "$body" | jq -r '.admin_id,.coordinator_fingerprint // empty' 2>/dev/null | while read -r line; do
-      [[ -n "$line" ]] && echo "bootstrap: $line"
-    done
+    if command -v jq >/dev/null 2>&1 && echo "$body" | jq -e . >/dev/null 2>&1; then
+      aid="$(echo "$body" | jq -r '.admin_id // empty')"
+      [[ -n "$aid" ]] && echo "bootstrap: admin_id=${aid}"
+    fi
     echo "Coordinator bootstrap complete."
     ;;
   403)
@@ -44,9 +45,12 @@ case "$code" in
       echo "Coordinator already bootstrapped; resuming."
       exit 0
     fi
-    staging_die "setup forbidden (http $code): $body"
+    staging_die "setup forbidden (http $code)"
+    ;;
+  000|"")
+    staging_die "setup request failed (no http response; is coordinator running?)"
     ;;
   *)
-    staging_die "setup failed (http $code): $body"
+    staging_die "setup failed (http $code)"
     ;;
 esac
