@@ -12,12 +12,15 @@ Coordinator M1 enforces revocation on the **control plane** immediately. Clients
 | `POST /v1/sessions` | Fails (device not in `GetDevice`) |
 | `GET /v1/peers` / `GET /v1/vpn/config` | Revoked devices omitted from peer lists |
 
-## Client responsibilities (M2)
+## Client responsibilities (M2 — implemented)
 
-1. On auth failure with “unknown device” / “token revoked”, clear `session.json` and stop signaling.
-2. Periodically refresh `GET /v1/vpn/config` (existing daemon refresh interval or new explicit interval).
-3. Remove WireGuard peers not present in latest config; do not trust stale local peer cache after refresh.
-4. Do not treat `signaling_online` from admin API as VPN reachability.
+1. On auth failure (401/403) during VPN config refresh, clear `session.json` via `Runtime.ClearDeviceSession()`.
+2. Daemon `startVPNReconcile` polls `GET /v1/vpn/config` every ~45s while VPN is up.
+3. Peers missing from config: `wgengine.RemovePeer`, `Runtime.DropPeerForRevocation` (ICE + link cache).
+4. New peers in config are added to WireGuard when they appear.
+5. Do not treat `signaling_online` as VPN reachability.
+
+**Offline limitation:** peers without connectivity to the coordinator keep stale WG state until refresh succeeds.
 
 ## Out of scope for M1
 

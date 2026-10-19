@@ -122,8 +122,9 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setAdminSessionCookies(w, sess)
 	writeJSON(w, http.StatusOK, map[string]string{
-		"admin_id":   admin.ID,
-		"expires_at": sess.ExpiresAt.Format(time.RFC3339),
+		"admin_id":       admin.ID,
+		"expires_at":     sess.ExpiresAt.Format(time.RFC3339),
+		"session_token":  sess.ID,
 	})
 }
 

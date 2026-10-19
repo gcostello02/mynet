@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/grantcostello/mynet/internal/client"
+	"github.com/grantcostello/mynet/internal/invitation"
 	"github.com/grantcostello/mynet/internal/config"
 	"github.com/grantcostello/mynet/internal/control"
 	"github.com/grantcostello/mynet/internal/daemon"
@@ -55,6 +58,40 @@ func main() {
 			}
 		}
 		fmt.Printf("Initialized device %q in %s\n", *name, stateDir())
+	case "join":
+		fs := flag.NewFlagSet("join", flag.ExitOnError)
+		name := fs.String("name", "", "device name (required)")
+		force := fs.Bool("force", false, "replace existing identity (single-network V0.4)")
+		_ = fs.Parse(os.Args[2:])
+		var invStr string
+		if fs.NArg() >= 1 {
+			invStr = fs.Arg(0)
+		} else {
+			fmt.Fprintln(os.Stderr, "Paste invitation (base64url or JSON), then press Enter:")
+			sc := bufio.NewScanner(os.Stdin)
+			if sc.Scan() {
+				invStr = strings.TrimSpace(sc.Text())
+			}
+		}
+		if invStr == "" {
+			fmt.Fprintln(os.Stderr, "invitation required")
+			os.Exit(2)
+		}
+		inv, err := invitation.Parse(invStr)
+		if err != nil {
+			fatal(err)
+		}
+		if *name == "" {
+			fmt.Fprintln(os.Stderr, "--name is required")
+			os.Exit(2)
+		}
+		if err := rt.Join(inv, client.JoinOptions{DeviceName: *name, Force: *force}); err != nil {
+			fatal(err)
+		}
+		fmt.Println("Joined network successfully. Device enrolled and VPN registered.")
+		fmt.Println("Next: mynet service install && mynet service start  (or mynet up for manual VPN)")
+	case "admin":
+		cmdAdmin(os.Args[2:])
 	case "login":
 		fs := flag.NewFlagSet("login", flag.ExitOnError)
 		enroll := fs.String("enrollment-secret", "", "network enrollment secret (required on first enroll)")
@@ -558,6 +595,8 @@ func usage() {
 
 Usage:
   mynet init --name <device> [--server <url>] [--tailnet]
+  mynet join <invitation> --name <device>   (invitation is secret; HTTPS coordinator required)
+  mynet admin login --server <https-url>
   mynet login [--enrollment-secret <secret>] [--stay]
   mynet vpn register
   mynet peers
