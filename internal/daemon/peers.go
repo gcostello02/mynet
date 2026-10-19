@@ -125,7 +125,7 @@ func (n *Node) tryPeerICE(ctx context.Context, rt *client.Runtime, selfID string
 		defer cancel()
 		return rt.ConnectPeerVPNContext(attemptCtx, p.Name)
 	}
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(50 * time.Second)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

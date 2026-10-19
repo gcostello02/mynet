@@ -71,6 +71,7 @@ type Runtime struct {
 	connectWait  chan error // initiator waits for ICE result
 	iceCancel    context.CancelFunc
 	iceCancelFor string
+	iceDialPeer  string // peer name for in-flight runICESession dial (VPN multi-peer)
 
 	incomingICE     map[string]bool
 	peerInFlightICE map[string]string // peer name -> session ID currently negotiating (VPN + app ICE)
@@ -420,18 +421,27 @@ func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) boo
 		r.peerInFlightICE[ready.PeerName] = ready.SessionID
 	}
 	if r.activeSession != "" && r.activeSession != ready.SessionID {
-		if r.iceCancel != nil {
-			r.iceCancel()
-			r.iceCancel = nil
-			r.iceCancelFor = ""
-		}
-		if r.dataConn != nil {
-			_ = r.dataConn.Close()
-			r.dataConn = nil
-		}
-		if r.iceSession != nil {
-			_ = r.iceSession.Close()
-			r.iceSession = nil
+		if r.vpnMode {
+			if ready.PeerName != "" && r.peerName == ready.PeerName && r.iceCancel != nil {
+				r.iceCancel()
+				r.iceCancel = nil
+				r.iceCancelFor = ""
+				r.iceDialPeer = ""
+			}
+		} else {
+			if r.iceCancel != nil {
+				r.iceCancel()
+				r.iceCancel = nil
+				r.iceCancelFor = ""
+			}
+			if r.dataConn != nil {
+				_ = r.dataConn.Close()
+				r.dataConn = nil
+			}
+			if r.iceSession != nil {
+				_ = r.iceSession.Close()
+				r.iceSession = nil
+			}
 		}
 	}
 	r.activeSession = ready.SessionID
@@ -755,10 +765,15 @@ func (r *Runtime) runICESession(iceCtx context.Context, sessionID, peerName stri
 	dialCtx, dialCancel := context.WithTimeout(iceCtx, icepkg.ConnectTimeout)
 	r.mu.Lock()
 	if r.iceCancel != nil && r.iceCancelFor != sessionID {
-		r.iceCancel()
+		if !r.vpnMode || peerName == "" || r.iceDialPeer == "" || r.iceDialPeer == peerName {
+			r.iceCancel()
+		}
 	}
 	r.iceCancel = dialCancel
 	r.iceCancelFor = sessionID
+	if r.vpnMode && peerName != "" {
+		r.iceDialPeer = peerName
+	}
 	r.mu.Unlock()
 	defer func() {
 		dialCancel()
@@ -766,6 +781,9 @@ func (r *Runtime) runICESession(iceCtx context.Context, sessionID, peerName stri
 		if r.iceCancelFor == sessionID {
 			r.iceCancel = nil
 			r.iceCancelFor = ""
+			if r.vpnMode && r.iceDialPeer == peerName {
+				r.iceDialPeer = ""
+			}
 		}
 		r.mu.Unlock()
 	}()
@@ -841,14 +859,32 @@ func (r *Runtime) Ping(peerName string) (time.Duration, error) {
 		return 0, err
 	}
 	r.mu.Lock()
+	vpn := r.vpnMode
+	if vpn && peerName != "" {
+		if l, ok := r.peerLinks[peerName]; ok && l != nil && l.Conn != nil && !r.peerLinkStaleLocked(l) {
+			conn := l.Conn
+			r.mu.Unlock()
+			rtt, err := peer.PingRTT(conn, 5*time.Second)
+			if err != nil {
+				return 0, err
+			}
+			return rtt, nil
+		}
+	}
 	conn := r.dataConn
 	state := r.connState
 	if peerName != "" && r.peerName != peerName {
 		r.mu.Unlock()
+		if vpn {
+			return 0, fmt.Errorf("peer %q not connected (VPN transport not ready)", peerName)
+		}
 		return 0, fmt.Errorf("not connected to peer %q", peerName)
 	}
 	r.mu.Unlock()
 	if state != StateConnected || conn == nil {
+		if vpn {
+			return 0, fmt.Errorf("peer %q not connected (VPN transport not ready)", peerName)
+		}
 		return 0, errors.New("not directly connected; run mynet connect --peer <name>")
 	}
 	rtt, err := peer.PingRTT(conn, 5*time.Second)

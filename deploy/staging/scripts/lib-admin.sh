@@ -36,35 +36,44 @@ staging_admin_login() {
     --server "$MYNET_COORD_PUBLIC_URL" --user "$MYNET_STAGING_ADMIN_USER"
 }
 
+_staging_admin_run_once() {
+  local ROOT="$1"
+  local tmp_out="$2"
+  shift 2
+  staging_admin "$ROOT" "$@" >"$tmp_out" 2>&1
+}
+
 # Run an admin subcommand; on HTTP 401 re-login as the same user and retry once.
 staging_admin_run() {
   local ROOT="$1"
   shift
-  local tmp_out
+  local tmp_out ec
   tmp_out="$(mktemp)"
-  trap 'rm -f "$tmp_out"' RETURN
-
-  if staging_admin "$ROOT" "$@" >"$tmp_out" 2>&1; then
-    cat "$tmp_out"
-    return 0
-  fi
-  local ec=$?
-  if grep -qE 'http 401|admin authentication required' "$tmp_out"; then
-    echo "staging: admin session invalid; requesting fresh login for ${MYNET_STAGING_ADMIN_USER}" >&2
-    staging_admin_env
-    if ! staging_admin_login "$ROOT" >/dev/null 2>&1; then
-      echo "staging error: admin re-login failed (check credentials)" >&2
-      cat "$tmp_out" >&2
-      return 1
-    fi
-    if staging_admin "$ROOT" "$@" >"$tmp_out" 2>&1; then
-      cat "$tmp_out"
-      return 0
-    fi
+  if ! _staging_admin_run_once "$ROOT" "$tmp_out" "$@"; then
     ec=$?
+    if grep -qE 'http 401|admin authentication required' "$tmp_out"; then
+      echo "staging: admin session invalid; requesting fresh login for ${MYNET_STAGING_ADMIN_USER:-staging-admin}" >&2
+      staging_admin_env
+      if ! staging_admin_login "$ROOT" >/dev/null 2>&1; then
+        echo "staging error: admin re-login failed (check credentials)" >&2
+        cat "$tmp_out" >&2
+        rm -f "$tmp_out"
+        return 1
+      fi
+      if _staging_admin_run_once "$ROOT" "$tmp_out" "$@"; then
+        cat "$tmp_out"
+        rm -f "$tmp_out"
+        return 0
+      fi
+      ec=$?
+    fi
+    cat "$tmp_out" >&2
+    rm -f "$tmp_out"
+    return "$ec"
   fi
-  cat "$tmp_out" >&2
-  return "$ec"
+  cat "$tmp_out"
+  rm -f "$tmp_out"
+  return 0
 }
 
 # Exit non-zero unless admin session works (re-login on 401).

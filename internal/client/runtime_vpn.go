@@ -182,7 +182,7 @@ func (r *Runtime) storePeerLink(peerName, sessionID string, conn net.Conn, path 
 
 	if sess != nil {
 		sess.SetStateChangeHandler(func(st icepkg.ConnectionState) {
-			if !icepkg.StateTerminal(st) {
+			if !icepkg.StateVPNTransportTerminal(st) {
 				return
 			}
 			r.mu.Lock()

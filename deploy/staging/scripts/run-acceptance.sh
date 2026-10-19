@@ -56,7 +56,7 @@ echo "Starting privileged client containers (profile: clients)..."
 docker compose --profile clients up -d client-a client-b client-c
 
 STAGE="data-plane-wait"
-sleep 20
+sleep 30
 STAGE="data-plane"
 "${ROOT}/scripts/data-plane.sh"
 STAGE="recovery"

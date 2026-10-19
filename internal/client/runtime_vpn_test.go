@@ -8,11 +8,18 @@ import (
 	icepkg "github.com/gcostello02/mynet/internal/ice"
 )
 
-type genConn struct{}
+type genConn struct {
+	onClose func()
+}
 
 func (g *genConn) Read(b []byte) (int, error)  { return 0, nil }
 func (g *genConn) Write(b []byte) (int, error) { return len(b), nil }
-func (g *genConn) Close() error                { return nil }
+func (g *genConn) Close() error {
+	if g.onClose != nil {
+		g.onClose()
+	}
+	return nil
+}
 func (g *genConn) LocalAddr() net.Addr         { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
 func (g *genConn) RemoteAddr() net.Addr        { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 2)} }
 func (g *genConn) SetDeadline(time.Time) error       { return nil }
