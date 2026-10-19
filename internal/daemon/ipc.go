@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -60,23 +59,6 @@ type PreflightResponse struct {
 func ServeIPC(stateDir string, node *Node) error {
 	s := &Service{StateDir: stateDir, Node: node}
 	return s.Run()
-}
-
-func chownToSudoInvoker(path string) error {
-	if os.Geteuid() != 0 {
-		return nil
-	}
-	u := config.OwnerUsername()
-	if u == "" || u == "root" {
-		return nil
-	}
-	ou, err := user.Lookup(u)
-	if err != nil {
-		return err
-	}
-	uid, _ := strconv.Atoi(ou.Uid)
-	gid, _ := strconv.Atoi(ou.Gid)
-	return os.Chown(path, uid, gid)
 }
 
 func errString(err error) string {
