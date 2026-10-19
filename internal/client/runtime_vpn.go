@@ -52,8 +52,10 @@ func (r *Runtime) ConnectPeerVPNContext(ctx context.Context, peerName string) (*
 	if r.api.Token == "" {
 		return nil, errors.New("not logged in")
 	}
-	if l, ok := r.PeerLink(peerName); ok {
-		return l, nil
+	if !r.PeerLinkStale(peerName) {
+		if l, ok := r.PeerLink(peerName); ok {
+			return l, nil
+		}
 	}
 	r.SetVPNMode(true)
 	if err := r.waitForSignaling(ctx); err != nil {
@@ -136,8 +138,12 @@ func (r *Runtime) waitPeerOnlineForICE(ctx context.Context, peerName string) {
 		peers, err := r.api.Peers()
 		if err == nil {
 			for _, p := range peers {
-				if p.Name == peerName && p.Online {
-					return
+				if p.Name == peerName {
+					r.notePeerOnlineState(peerName, p.Online)
+					if p.Online {
+						return
+					}
+					break
 				}
 			}
 		}
@@ -210,6 +216,26 @@ func (r *Runtime) PeerLinkLivePath(peerName string) (icepkg.PathInfo, bool) {
 		return l.Session.LivePath(), true
 	}
 	return l.Path, true
+}
+
+// supersedeVPNPeerLinkLocked closes a cached link so a new coordinator session can negotiate ICE.
+// Caller must hold r.mu.
+func (r *Runtime) supersedeVPNPeerLinkLocked(peerName string, l *PeerLink, reason string) {
+	if l == nil {
+		return
+	}
+	iceTrace("vpn_peer_link_supersede", map[string]string{
+		"peer":       peerName,
+		"old_session": l.SessionID,
+		"reason":     reason,
+	})
+	if l.Conn != nil {
+		_ = l.Conn.Close()
+	}
+	if l.Session != nil {
+		_ = l.Session.Close()
+	}
+	delete(r.peerLinks, peerName)
 }
 
 func (r *Runtime) peerLinkStaleLocked(l *PeerLink) bool {

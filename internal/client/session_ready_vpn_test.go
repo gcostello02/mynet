@@ -6,7 +6,7 @@ import (
 	"github.com/grantcostello/mynet/internal/control"
 )
 
-// A new session_ready must replace a stale Connecting session (regression for already_active skip).
+// A new session_ready must replace a stale Connecting session (regression for removed already_active skip).
 func TestNewSessionReadyReplacesStaleConnectingSession(t *testing.T) {
 	rt := NewRuntime(t.TempDir(), nil)
 	rt.SetVPNMode(true)
