@@ -1,0 +1,6 @@
+certs/*
+!certs/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+.env
+secrets/

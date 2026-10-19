@@ -1,0 +1,8 @@
+{
+	auto_https off
+}
+
+https://staging-coord.mynet.test {
+	tls /certs/coord.crt /certs/coord.key
+	reverse_proxy coordinator:8080
+}
