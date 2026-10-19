@@ -73,7 +73,7 @@ func setMetaValue(db *sql.DB, key, value string) error {
 	return err
 }
 
-func completeSetup(db *sql.DB, m *NetworkMeta, id *CoordinatorIdentity, displayName, publicURL string) error {
+func completeSetup(db *sql.DB, m *NetworkMeta, id *CoordinatorIdentity, displayName, publicURL, dataPath string) error {
 	if err := setMetaValue(db, metaSetupComplete, "true"); err != nil {
 		return err
 	}
@@ -108,6 +108,9 @@ func completeSetup(db *sql.DB, m *NetworkMeta, id *CoordinatorIdentity, displayN
 	m.DisplayName = displayName
 	m.PublicServerURL = publicURL
 	m.mu.Unlock()
+	if err := saveCoordinatorIdentity(dataPath, id); err != nil {
+		return err
+	}
 	return nil
 }
 

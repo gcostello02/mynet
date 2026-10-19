@@ -41,13 +41,14 @@ type Config struct {
 
 // Server is the MyNet coordination / signaling server.
 type Server struct {
-	cfg      Config
-	store    *Store
-	hub      *Hub
-	http     *http.Server
-	log      *slog.Logger
-	enrollRL *ipLimiter
-	loginRL  *ipLimiter
+	cfg                 Config
+	store               *Store
+	hub                 *Hub
+	http                *http.Server
+	log                 *slog.Logger
+	enrollRL            *ipLimiter
+	loginRL             *ipLimiter
+	coordinatorIdentity *CoordinatorIdentity
 }
 
 func New(cfg Config) (*Server, error) {
@@ -87,11 +88,19 @@ func New(cfg Config) (*Server, error) {
 		enrollRL: newIPLimiter(30, 10),
 		loginRL:  newIPLimiter(10, 5),
 	}
+	if cfg.DataPath != "" && store.meta.SetupComplete {
+		id, err := loadCoordinatorIdentity(cfg.DataPath, store.meta.CoordinatorPublicKeyB64, store.meta.CoordinatorFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("coordinator identity: %w", err)
+		}
+		s.coordinatorIdentity = id
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.Handle("POST /v1/enroll", s.rateLimitMiddleware(s.enrollRL, http.HandlerFunc(s.handleEnroll)))
 	mux.HandleFunc("POST /v1/auth", s.handleAuth)
 	mux.HandleFunc("GET /v1/network/public", s.handleNetworkPublic)
+	mux.Handle("POST /v1/network/proof", s.rateLimitMiddleware(s.enrollRL, http.HandlerFunc(s.handleNetworkProof)))
 	mux.Handle("POST /v1/admin/setup", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminSetup)))
 	mux.Handle("POST /v1/admin/login", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminLogin)))
 	mux.HandleFunc("POST /v1/admin/logout", s.handleAdminLogout)
@@ -197,22 +206,30 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		NetworkID: s.store.NetworkID(),
 		Enrolled:  time.Now().UTC(),
 	}
-	if err := s.store.EnrollDevice(rec); err != nil {
-		if err == errNameTaken || err == errDeviceExists || err == errRevoked {
+	var enrollErr error
+	if invitationToken != "" {
+		enrollErr = s.store.EnrollDeviceWithInvitationAtomic(invitationToken, rec)
+	} else {
+		enrollErr = s.store.EnrollDevice(rec)
+	}
+	if enrollErr != nil {
+		if enrollErr == errNameTaken || enrollErr == errDeviceExists || enrollErr == errRevoked {
 			code := http.StatusConflict
-			if err == errRevoked {
+			if enrollErr == errRevoked {
 				code = http.StatusForbidden
 			}
-			httpError(w, code, err.Error())
+			if enrollErr == errInvitationExpired || enrollErr == errInvitationExhausted || enrollErr == errInvitationInvalid {
+				code = http.StatusGone
+			}
+			httpError(w, code, enrollErr.Error())
 			return
 		}
-		httpError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if invitationToken != "" {
-		if err := s.store.RedeemInvitation(invitationToken); err != nil {
-			s.log.Warn("invitation redeem after enroll failed", "device_id", req.DeviceID, "err", err)
+		if enrollErr == errInvitationExpired || enrollErr == errInvitationExhausted || enrollErr == errInvitationInvalid {
+			httpError(w, http.StatusGone, "enrollment denied")
+			return
 		}
+		httpError(w, http.StatusBadRequest, enrollErr.Error())
+		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"device_id":  req.DeviceID,
