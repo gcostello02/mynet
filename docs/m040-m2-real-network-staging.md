@@ -68,8 +68,11 @@ Artifacts: `deploy/staging/artifacts/*.txt`, `*-results.txt`.
 - [ ] `mynet ping --peer` for each pair
 - [ ] `mynet diagnose` shows ICE path (P2P or relay) — **real** negotiation, not httptest
 - [ ] Coordinator restart: clients keep identity; signaling/VPN recover
-- [ ] Revoke client-c: auth fails; peer removed from others; measured delay logged in `revoke-results.txt`
+- [ ] Revoke client-c: coordinator `revoked: true`; device auth fails; WG peer removed; VPN ping fails; ICE cleared; latencies in `revoke-results.txt`
+- [ ] `invitation-replay-results.txt`: consumed `inv-client-c` rejected by coordinator from isolated join (no daemon / no identity)
 - [ ] Authorized pair A↔B still pings after revoke
+- [ ] `mynet diagnose` stage timings plausible or `n/a` (not multi-year overflow)
+- [ ] After coordinator restart, admin scripts re-login on HTTP 401 (same `MYNET_STAGING_ADMIN_USER`)
 
 ## Partial-run recovery
 

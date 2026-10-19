@@ -109,6 +109,14 @@ func cmdAdmin(args []string) {
 			fatal(err)
 		}
 		switch args[1] {
+		case "list":
+			invites, err := api.AdminListInvitations()
+			if err != nil {
+				fatal(err)
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(invites)
 		case "create":
 			fs := flag.NewFlagSet("admin invitations create", flag.ExitOnError)
 			label := fs.String("label", "", "invitation label")
@@ -178,5 +186,6 @@ func adminUsage() {
   mynet admin status
   mynet admin devices list
   mynet admin devices revoke <device_id>
+  mynet admin invitations list
   mynet admin invitations create [--label <name>] [--expires 86400] [--max-uses 1]`)
 }

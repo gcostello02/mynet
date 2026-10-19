@@ -12,10 +12,14 @@ ADMIN_PASS="${MYNET_STAGING_ADMIN_PASS:-staging-password-12chars}"
 
 mkdir -p "${ROOT}/artifacts" "${ROOT}/admin-state"
 
+staging_admin_env
+export MYNET_COORD_PUBLIC_URL="$SERVER"
+export MYNET_STAGING_ADMIN_USER="$ADMIN_USER"
+export MYNET_STAGING_ADMIN_PASS="$ADMIN_PASS"
 if [[ ! -f "${ROOT}/admin-state/admin-session.json" ]]; then
-  printf '%s\n' "$ADMIN_PASS" | staging_admin "$ROOT" login --server "$SERVER" --user "$ADMIN_USER"
+  staging_admin_login "$ROOT"
 else
-  echo "Admin session file present; skipping login."
+  staging_admin_ensure "$ROOT" || staging_admin_login "$ROOT"
 fi
 
 for n in client-a client-b client-c; do
@@ -24,7 +28,7 @@ for n in client-a client-b client-c; do
     continue
   fi
   echo "Creating invitation for ${n}..."
-  out="$(staging_admin "$ROOT" invitations create --label "$n" --expires 86400 --max-uses 1)"
+  out="$(staging_admin_run "$ROOT" invitations create --label "$n" --expires 86400 --max-uses 1)"
   inv="$(echo "$out" | tail -1)"
   if [[ ${#inv} -lt 20 ]]; then
     staging_die "invitation output looks invalid for ${n} (check admin login / TLS)"
@@ -33,4 +37,4 @@ for n in client-a client-b client-c; do
   echo "Wrote artifacts/inv-${n}.txt (token not printed)."
 done
 
-staging_admin "$ROOT" devices list | tee "${ROOT}/artifacts/devices-after-enroll.json"
+staging_admin_run "$ROOT" devices list | tee "${ROOT}/artifacts/devices-after-enroll.json"

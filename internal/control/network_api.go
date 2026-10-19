@@ -121,6 +121,14 @@ func (c *APIClient) AdminCreateInvitation(label string, expiresInSec, maxUses in
 	return resp, nil
 }
 
+func (c *APIClient) AdminListInvitations() ([]map[string]any, error) {
+	var resp []map[string]any
+	if err := c.getJSON("/v1/admin/invitations", &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 func (c *APIClient) AdminRevokeDevice(deviceID string) error {
 	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/v1/admin/devices/"+deviceID+"/revoke", bytes.NewReader([]byte("{}")))
 	if err != nil {
