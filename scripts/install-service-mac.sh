@@ -14,7 +14,7 @@ for a in "$@"; do
 done
 cd "$REPO"
 [[ -x "$BIN" ]] || { echo "missing binary: $BIN" >&2; exit 1; }
-ARGS=(service install --binary "$BIN" --user "${USER}")
+ARGS=(service install --binary "$BIN" --user "${USER}" --system-binary)
 [[ "$DRY" -eq 1 ]] && ARGS+=(--dry-run)
 if [[ "$DRY" -eq 1 ]]; then
   "$BIN" "${ARGS[@]}"

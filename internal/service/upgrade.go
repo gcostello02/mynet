@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"os"
+	"runtime"
 )
 
 // UpgradeStages copies candidate to staged path after metadata verification.
@@ -54,6 +55,11 @@ func CommitSwap(plan UpgradePlan, stateDir string) error {
 	if err := os.Rename(plan.StagedPath, plan.LivePath); err != nil {
 		return err
 	}
+	if runtime.GOOS == "darwin" && plan.LivePath == DarwinSystemBinaryPath {
+		if err := FinalizeDarwinSystemBinary(plan.LivePath); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -66,6 +72,12 @@ func Rollback(plan UpgradePlan) error {
 }
 
 func copyExecutable(src, dst string) error {
+	if err := ValidateBinarySource(src); err != nil {
+		return fmt.Errorf("candidate: %w", err)
+	}
+	if err := validateNoSymlinkInPath(dst); err != nil {
+		return err
+	}
 	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
