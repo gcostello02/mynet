@@ -116,13 +116,34 @@ func cmdService(args []string) {
 		candidate := fs.String("candidate", "", "new binary path (required)")
 		backup := fs.String("backup", "", "rollback backup path")
 		stageOnly := fs.Bool("stage-only", false, "only copy candidate to .next")
+		commit := fs.Bool("commit", false, "swap staged binary into live (requires sudo; daemon stopped)")
 		_ = fs.Parse(rest)
-		if *candidate == "" {
-			fatal(fmt.Errorf("--candidate is required"))
+		candPath := *candidate
+		if candPath == "" {
+			if *commit {
+				candPath = *live
+			} else {
+				fatal(fmt.Errorf("--candidate is required"))
+			}
 		}
-		plan, err := service.PlanUpgrade(*live, *candidate, *backup)
+		plan, err := service.PlanUpgrade(*live, candPath, *backup)
 		if err != nil {
 			fatal(err)
+		}
+		if *commit {
+			sd, err := service.ResolveCLIStateDir()
+			if err != nil {
+				fatal(err)
+			}
+			if err := service.CommitSwap(plan, sd); err != nil {
+				fatal(err)
+			}
+			fmt.Printf("Upgrade committed: %s\n", plan.LivePath)
+			fmt.Printf("Rollback copy:     %s\n", plan.BackupPath)
+			return
+		}
+		if *candidate == "" {
+			fatal(fmt.Errorf("--candidate is required"))
 		}
 		rev, err := binaryVCSRevision(*candidate)
 		if err != nil {
@@ -134,10 +155,11 @@ func cmdService(args []string) {
 		}
 		fmt.Printf("Staged: %s\n", plan.StagedPath)
 		if *stageOnly {
-			fmt.Println("Stop daemon, then: mynet service upgrade --commit (or deploy script)")
+			fmt.Println("Next: sudo mynet service stop")
+			fmt.Println("      sudo mynet service upgrade --commit --live", *live)
 			return
 		}
-		fmt.Println("Upgrade staged. Stop supervised daemon, run commit via install script or manual mv.")
+		fmt.Println("Upgrade staged. Stop supervised daemon, then: sudo mynet service upgrade --commit")
 	default:
 		serviceUsage()
 		os.Exit(2)
@@ -170,7 +192,8 @@ func serviceUsage() {
   start | stop | restart   (requires sudo)
   status
   logs      [-f]
-  upgrade   --candidate PATH [--live PATH] [--backup PATH] [--stage-only]`)
+  upgrade   --candidate PATH [--live PATH] [--backup PATH] [--stage-only]
+            upgrade --commit [--live PATH] [--backup PATH]  (after stop)`)
 }
 
 func serviceLocalSpecPath() string {
