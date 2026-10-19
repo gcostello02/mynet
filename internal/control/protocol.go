@@ -5,12 +5,14 @@ const APIVersion = "v1"
 
 // EnrollRequest enrolls a new device into the default network.
 type EnrollRequest struct {
-	DeviceID         string `json:"device_id"`
-	Name             string `json:"name"`
-	PublicKey        string `json:"public_key"`
-	Timestamp        int64  `json:"timestamp"`
-	Signature        string `json:"signature"` // base64
-	EnrollmentSecret string `json:"enrollment_secret"`
+	DeviceID                string `json:"device_id"`
+	Name                    string `json:"name"`
+	PublicKey               string `json:"public_key"`
+	Timestamp               int64  `json:"timestamp"`
+	Signature               string `json:"signature"` // base64
+	EnrollmentSecret        string `json:"enrollment_secret"`
+	EnrollmentToken         string `json:"enrollment_token,omitempty"`
+	CoordinatorFingerprint  string `json:"coordinator_fingerprint,omitempty"`
 }
 
 // AuthRequest authenticates an already-enrolled device.

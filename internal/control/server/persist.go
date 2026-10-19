@@ -73,10 +73,10 @@ func LoadDevicesFromSQLite(path string, store *Store) error {
 		return err
 	}
 	defer db.Close()
-	if err := migrateDevicesDB(db); err != nil {
+	if err := migrateCoordinatorDB(db); err != nil {
 		return err
 	}
-	rows, err := db.Query(`SELECT device_id, name, public_key, network_id, revoked, enrolled_at, wg_public_key, vpn_ipv4 FROM devices`)
+	rows, err := db.Query(`SELECT device_id, name, public_key, network_id, revoked, enrolled_at, wg_public_key, vpn_ipv4, auth_epoch, renamed_at FROM devices`)
 	if err != nil {
 		return err
 	}
@@ -84,20 +84,24 @@ func LoadDevicesFromSQLite(path string, store *Store) error {
 	for rows.Next() {
 		var rec DeviceRecord
 		var revoked int
-		var enrolledStr string
-		if err := rows.Scan(&rec.DeviceID, &rec.Name, &rec.PublicKey, &rec.NetworkID, &revoked, &enrolledStr, &rec.WGPublicKey, &rec.VPNIPv4); err != nil {
+		var enrolledStr, renamedStr string
+		if err := rows.Scan(&rec.DeviceID, &rec.Name, &rec.PublicKey, &rec.NetworkID, &revoked, &enrolledStr, &rec.WGPublicKey, &rec.VPNIPv4, &rec.AuthEpoch, &renamedStr); err != nil {
 			return err
 		}
 		rec.Revoked = revoked != 0
 		if t, err := time.Parse(time.RFC3339Nano, enrolledStr); err == nil {
 			rec.Enrolled = t
 		}
-		if rec.Revoked {
-			continue
+		if renamedStr != "" {
+			if t, err := time.Parse(time.RFC3339Nano, renamedStr); err == nil {
+				rec.RenamedAt = t
+			}
 		}
 		store.mu.Lock()
 		store.devices[rec.DeviceID] = &rec
-		store.byName[rec.Name] = rec.DeviceID
+		if !rec.Revoked {
+			store.byName[rec.Name] = rec.DeviceID
+		}
 		store.mu.Unlock()
 	}
 	return rows.Err()
@@ -113,7 +117,7 @@ func PersistDevice(path string, rec *DeviceRecord) error {
 		return err
 	}
 	defer db.Close()
-	if err := migrateDevicesDB(db); err != nil {
+	if err := migrateCoordinatorDB(db); err != nil {
 		return err
 	}
 	revoked := 0
@@ -121,16 +125,19 @@ func PersistDevice(path string, rec *DeviceRecord) error {
 		revoked = 1
 	}
 	enrolled := rec.Enrolled.UTC().Format(time.RFC3339Nano)
-	_, err = db.Exec(`INSERT INTO devices (device_id, name, public_key, network_id, revoked, enrolled_at, wg_public_key, vpn_ipv4)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(device_id) DO UPDATE SET name=excluded.name, public_key=excluded.public_key, network_id=excluded.network_id, revoked=excluded.revoked, enrolled_at=excluded.enrolled_at, wg_public_key=excluded.wg_public_key, vpn_ipv4=excluded.vpn_ipv4`,
-		rec.DeviceID, rec.Name, rec.PublicKey, rec.NetworkID, revoked, enrolled, rec.WGPublicKey, rec.VPNIPv4)
+	renamed := ""
+	if !rec.RenamedAt.IsZero() {
+		renamed = rec.RenamedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err = db.Exec(`INSERT INTO devices (device_id, name, public_key, network_id, revoked, enrolled_at, wg_public_key, vpn_ipv4, auth_epoch, renamed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET name=excluded.name, public_key=excluded.public_key, network_id=excluded.network_id, revoked=excluded.revoked, enrolled_at=excluded.enrolled_at, wg_public_key=excluded.wg_public_key, vpn_ipv4=excluded.vpn_ipv4, auth_epoch=excluded.auth_epoch, renamed_at=excluded.renamed_at`,
+		rec.DeviceID, rec.Name, rec.PublicKey, rec.NetworkID, revoked, enrolled, rec.WGPublicKey, rec.VPNIPv4, rec.AuthEpoch, renamed)
 	return err
 }
 
-// MarkDeviceRevoked persists revocation.
-func MarkDeviceRevoked(path string, deviceID string) error {
-	if path == "" {
+func persistDeviceRevoked(path string, rec *DeviceRecord) error {
+	if path == "" || rec == nil {
 		return nil
 	}
 	db, err := sql.Open("sqlite", path)
@@ -138,7 +145,15 @@ func MarkDeviceRevoked(path string, deviceID string) error {
 		return err
 	}
 	defer db.Close()
-	res, err := db.Exec(`UPDATE devices SET revoked=1 WHERE device_id=?`, deviceID)
+	if err := migrateCoordinatorDB(db); err != nil {
+		return err
+	}
+	renamed := ""
+	if !rec.RenamedAt.IsZero() {
+		renamed = rec.RenamedAt.UTC().Format(time.RFC3339Nano)
+	}
+	res, err := db.Exec(`UPDATE devices SET revoked=1, auth_epoch=?, renamed_at=? WHERE device_id=?`,
+		rec.AuthEpoch, renamed, rec.DeviceID)
 	if err != nil {
 		return err
 	}

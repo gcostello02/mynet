@@ -1,6 +1,8 @@
 package server
 
 import (
+	"database/sql"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -13,7 +15,9 @@ type DeviceRecord struct {
 	WGPublicKey string // WireGuard public key (hex)
 	VPNIPv4     string // allocated virtual IPv4, e.g. 10.77.0.2
 	Revoked     bool
+	AuthEpoch   int
 	Enrolled    time.Time
+	RenamedAt   time.Time
 }
 
 type SessionRecord struct {
@@ -30,6 +34,13 @@ type Store struct {
 	networkID            string
 	enrollmentSecretHash string
 	dbPath               string
+	sqlDB                *sql.DB
+
+	meta         *NetworkMeta
+	admins       map[string]*AdminRecord
+	adminByUser  map[string]string
+	invitations  *invitationStore
+	adminSessions *adminSessionTable
 
 	devices  map[string]*DeviceRecord
 	byName   map[string]string // name -> device id (per network)
@@ -40,6 +51,11 @@ func NewStore(networkID, enrollmentSecretHash string) *Store {
 	return &Store{
 		networkID:            networkID,
 		enrollmentSecretHash: enrollmentSecretHash,
+		meta:                 &NetworkMeta{},
+		admins:               make(map[string]*AdminRecord),
+		adminByUser:          make(map[string]string),
+		invitations:          newInvitationStore(),
+		adminSessions:        newAdminSessionTable(),
 		devices:              make(map[string]*DeviceRecord),
 		byName:               make(map[string]string),
 		sessions:             make(map[string]*SessionRecord),
@@ -53,6 +69,9 @@ func (s *Store) EnrollDevice(rec *DeviceRecord) error {
 		return errRevoked
 	}
 	if existing, ok := s.devices[rec.DeviceID]; ok {
+		if existing.Revoked {
+			return errRevoked
+		}
 		if existing.PublicKey != rec.PublicKey {
 			return errDeviceExists
 		}
@@ -120,15 +139,74 @@ func (s *Store) RevokeDevice(deviceID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.devices[deviceID]
-	if !ok {
+	if !ok || d.Revoked {
 		return false
 	}
 	d.Revoked = true
+	d.AuthEpoch++
 	delete(s.byName, d.Name)
 	if s.dbPath != "" {
-		_ = MarkDeviceRevoked(s.dbPath, deviceID)
+		_ = persistDeviceRevoked(s.dbPath, d)
 	}
 	return true
+}
+
+func (s *Store) RenameDevice(deviceID, newName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.devices[deviceID]
+	if !ok || d.Revoked {
+		return fmt.Errorf("device not found")
+	}
+	if other, ok := s.byName[newName]; ok && other != deviceID {
+		return errNameTaken
+	}
+	delete(s.byName, d.Name)
+	d.Name = newName
+	d.RenamedAt = time.Now().UTC()
+	s.byName[newName] = deviceID
+	if s.dbPath != "" {
+		_ = PersistDevice(s.dbPath, d)
+	}
+	return nil
+}
+
+func (s *Store) ListAllDevices() []DeviceRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]DeviceRecord, 0, len(s.devices))
+	for _, d := range s.devices {
+		out = append(out, *d)
+	}
+	return out
+}
+
+func (s *Store) GetDeviceIncludingRevoked(deviceID string) (*DeviceRecord, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	d, ok := s.devices[deviceID]
+	if !ok {
+		return nil, false
+	}
+	return d, true
+}
+
+func (s *Store) DeviceAuthEpoch(deviceID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	d, ok := s.devices[deviceID]
+	if !ok {
+		return -1
+	}
+	return d.AuthEpoch
+}
+
+func (s *Store) Meta() *NetworkMeta {
+	return s.meta
+}
+
+func (s *Store) AdminCount() int {
+	return len(s.admins)
 }
 
 func (s *Store) CreateSession(id, initiator, responder, networkID string) *SessionRecord {
