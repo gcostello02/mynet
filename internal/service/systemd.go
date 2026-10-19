@@ -28,7 +28,7 @@ User=root
 AmbientCapabilities=CAP_NET_ADMIN
 # Root must read/write the identity owner's ~/.mynet (often mode 0700 under a 0750 home)
 # without broadening filesystem permissions. Bounded caps drop DAC bypass by default.
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
 NoNewPrivileges=false
 
 [Install]

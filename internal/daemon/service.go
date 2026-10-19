@@ -59,8 +59,16 @@ func (s *Service) Run() error {
 		return err
 	}
 	s.ln = ln
-	_ = os.Chmod(path, 0o600)
-	_ = chownToSudoInvoker(path)
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = ln.Close()
+		releaseDaemonLock(lock)
+		return fmt.Errorf("ipc socket mode: %w", err)
+	}
+	if err := ChownToConfiguredOwner(path); err != nil {
+		_ = ln.Close()
+		releaseDaemonLock(lock)
+		return fmt.Errorf("ipc socket ownership: %w", err)
+	}
 
 	ps, err := StartProfileServer(s.StateDir)
 	if err != nil {

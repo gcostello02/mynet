@@ -64,8 +64,14 @@ func StartProfileServer(stateDir string) (*ProfileServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(path, 0o600)
-	_ = chownToSudoInvoker(path)
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
+	if err := ChownToConfiguredOwner(path); err != nil {
+		_ = ln.Close()
+		return nil, err
+	}
 
 	srv := &http.Server{
 		Handler:           http.DefaultServeMux,
@@ -148,7 +154,7 @@ func ensureProfilesDir(stateDir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return chownToSudoInvoker(dir)
+	return ChownToConfiguredOwner(dir)
 }
 
 func captureProfileFile(stateDir, prefix string, write func(io.Writer) error) (string, error) {
@@ -170,7 +176,7 @@ func captureProfileFile(stateDir, prefix string, write func(io.Writer) error) (s
 	if err := f.Close(); err != nil {
 		return "", err
 	}
-	_ = chownToSudoInvoker(path)
+	_ = ChownToConfiguredOwner(path)
 	return path, nil
 }
 

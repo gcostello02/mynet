@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -59,9 +58,12 @@ func ensureDaemon(log *slog.Logger) error {
 func runDaemon(log *slog.Logger) {
 	dir := stateDir()
 	node := &daemon.Node{StateDir: dir, Logger: log}
-	pidPath := filepath.Join(dir, "mynetd.pid")
-	_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
-	_ = chownPIDToInvoker(pidPath)
+	if err := daemon.WritePIDFile(dir); err != nil {
+		log.Error("pid file", "err", err)
+		if config.Supervised() {
+			os.Exit(1)
+		}
+	}
 
 	if config.RunVPNAtStart() || config.Supervised() {
 		go func() {
@@ -94,14 +96,6 @@ func handleDaemonSignals(log *slog.Logger) {
 		os.Exit(0)
 	}
 	os.Exit(1)
-}
-
-func chownPIDToInvoker(path string) error {
-	if os.Geteuid() != 0 {
-		return nil
-	}
-	// same as socket: leave root-owned pid when not sudo; optional
-	return nil
 }
 
 func cmdUp(log *slog.Logger) {

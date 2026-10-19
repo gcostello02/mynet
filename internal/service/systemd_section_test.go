@@ -24,6 +24,9 @@ func TestSystemdCapabilityDACForUserState(t *testing.T) {
 	if !strings.Contains(u, "CAP_DAC_OVERRIDE") || !strings.Contains(u, "CAP_DAC_READ_SEARCH") {
 		t.Fatalf("unit must include DAC capabilities for root+user state dir access")
 	}
+	if !strings.Contains(u, "CAP_CHOWN") {
+		t.Fatalf("unit must include CAP_CHOWN for IPC socket ownership")
+	}
 }
 
 func systemdSectionText(unit, name string) string {
