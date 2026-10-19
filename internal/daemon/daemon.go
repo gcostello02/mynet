@@ -48,6 +48,7 @@ type Node struct {
 	vpnPeerKeys     map[string]string // peer name -> wg public key hex
 	reconcileMu     sync.Mutex
 	peerCancel      context.CancelFunc
+	peerWorkers     map[string]context.CancelFunc // per-peer VPN ICE worker
 	signalingCancel context.CancelFunc
 	netWatch        *NetWatcher
 }

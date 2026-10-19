@@ -37,4 +37,4 @@ for n in client-a client-b client-c; do
   echo "Wrote artifacts/inv-${n}.txt (token not printed)."
 done
 
-staging_admin_run "$ROOT" devices list | tee "${ROOT}/artifacts/devices-after-enroll.json"
+staging_admin_devices_json "$ROOT" | tee "${ROOT}/artifacts/devices-after-enroll.json"

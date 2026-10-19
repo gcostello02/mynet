@@ -22,7 +22,34 @@ const (
 func (n *Node) startPeerWorkers(ctx context.Context, rt *client.Runtime, selfID string, peers []control.VPNPeerConfig) {
 	for _, p := range peers {
 		n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStatePending, icepkg.PathInfo{}, "")
-		go n.runPeerWorker(ctx, rt, selfID, p)
+		peerCtx, cancel := context.WithCancel(ctx)
+		n.mu.Lock()
+		if n.peerWorkers == nil {
+			n.peerWorkers = make(map[string]context.CancelFunc)
+		}
+		if old, ok := n.peerWorkers[p.Name]; ok {
+			old()
+		}
+		n.peerWorkers[p.Name] = cancel
+		n.mu.Unlock()
+		go n.runPeerWorker(peerCtx, rt, selfID, p)
+	}
+}
+
+func (n *Node) isAuthorizedVPNPeer(name string) bool {
+	n.mu.Lock()
+	_, ok := n.vpnPeerKeys[name]
+	n.mu.Unlock()
+	return ok
+}
+
+func (n *Node) stopVPNPeerWorker(peerName string) {
+	n.mu.Lock()
+	cancel := n.peerWorkers[peerName]
+	delete(n.peerWorkers, peerName)
+	n.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -37,7 +64,7 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 		if ctx.Err() != nil {
 			return
 		}
-		if !n.VPNActive() {
+		if !n.VPNActive() || !n.isAuthorizedVPNPeer(p.Name) {
 			return
 		}
 		n.setPeerRecovery(p.Name, iceFailures, transportRecoveries, "connecting")
