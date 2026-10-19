@@ -88,7 +88,7 @@ func (n *Node) runPeerWorker(ctx context.Context, rt *client.Runtime, selfID str
 			n.setPeerStatus(p.Name, p.VPNIPv4, p.WGPublicKey, peerStateConnecting, icepkg.PathInfo{}, "")
 			continue
 		}
-		if iceErr != nil && errors.Is(iceErr, context.DeadlineExceeded) {
+		if peerICEErrorCountsAsFailure(iceErr) {
 			rt.NoteICEAttemptFailed(p.Name, peerErrString(iceErr))
 		}
 		if tl, ok := rt.PeerRecoveryTimeline(p.Name); ok {

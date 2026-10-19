@@ -24,6 +24,9 @@ func InstallDarwinSystemBinary(source string) error {
 	if err := chownRootWheel(DarwinSystemBinaryDir); err != nil {
 		return fmt.Errorf("chown %s: %w", DarwinSystemBinaryDir, err)
 	}
+	if err := validateDarwinLibexecInstallTree(); err != nil {
+		return err
+	}
 	if err := copyExecutableRoot(source, dest); err != nil {
 		return err
 	}
