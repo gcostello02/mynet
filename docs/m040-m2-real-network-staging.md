@@ -83,15 +83,20 @@ If acceptance stops after coordinator bootstrap (e.g. invitation step failed):
    docker compose up -d coordinator proxy
    ./scripts/enroll-three.sh
    ```
-2. **Full staging reset** (only project `mynet-m2-staging`):
+2. **Stop and clear local admin files** (coordinator DB **kept**):
    ```bash
    MYNET_STAGING_RESET=1 ./scripts/reset-staging.sh
-   MYNET_STAGING_PURGE_VOLUMES=1 ./scripts/teardown.sh   # optional: wipe coord-data
+   ```
+3. **Fresh coordinator database** (only project `mynet-m2-staging` volumes):
+   ```bash
+   MYNET_STAGING_FRESH=1 ./scripts/fresh-staging.sh
    ```
 
 `bootstrap-coordinator.sh` skips setup when `/v1/network/public` already responds. `enroll-three.sh` skips existing `artifacts/inv-*.txt` and reuses `admin-state/admin-session.json`.
 
-Admin commands use `docker compose run admin-toolbox` (not `docker run --add-host`; unsupported on Compose v5).
+Admin commands use `docker compose run admin-toolbox` with entrypoint `/bin/bash` and `-lc` only (no nested `bash` argv). Smoke test: `./scripts/verify-admin-toolbox.sh`.
+
+Secrets: `secrets/server.secret` (mode 600, gitignored). File takes precedence over `MYNET_SERVER_SECRET` in the shell unless `MYNET_STAGING_ALLOW_ENV_SECRET=1`. Removed by `fresh-staging.sh`.
 
 ## Cleanup
 
