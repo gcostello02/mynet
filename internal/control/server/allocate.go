@@ -51,9 +51,6 @@ func (s *Store) AllocateVPNIPv4(deviceID string, wgPublicKeyHex string, pool *ne
 func (s *Store) nextFreeHost(pool *net.IPNet) (string, error) {
 	used := make(map[string]bool)
 	for _, d := range s.devices {
-		if d.Revoked {
-			continue
-		}
 		if d.VPNIPv4 != "" {
 			used[d.VPNIPv4] = true
 		}

@@ -72,6 +72,18 @@ func (h *Hub) IsOnline(deviceID string) bool {
 	return ok
 }
 
+// DisconnectDevice closes the active signaling connection for deviceID, if any.
+func (h *Hub) DisconnectDevice(deviceID string) {
+	h.mu.Lock()
+	c, ok := h.clients[deviceID]
+	if ok {
+		close(c.send)
+		_ = c.conn.Close()
+		delete(h.clients, deviceID)
+	}
+	h.mu.Unlock()
+}
+
 func (h *Hub) writePump(c *wsClient) {
 	for msg := range c.send {
 		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {

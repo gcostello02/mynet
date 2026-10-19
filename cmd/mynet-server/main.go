@@ -55,6 +55,7 @@ func main() {
 		vpnCIDR = "172.31.240.0/20"
 	}
 
+	secureCookies := os.Getenv("MYNET_SECURE_COOKIES") == "1" || os.Getenv("MYNET_SECURE_COOKIES") == "true"
 	srv, err := server.New(server.Config{
 		ListenAddr:       *listen,
 		ServerSecret:     []byte(serverSecret),
@@ -64,6 +65,8 @@ func main() {
 		ICE:              iceCfg,
 		VPN:              server.VPNConfig{IPv4CIDR: vpnCIDR},
 		DataPath:         *dataPath,
+		SetupToken:       os.Getenv("MYNET_SETUP_TOKEN"),
+		SecureCookies:    secureCookies,
 	})
 	if err != nil {
 		log.Error("server init failed", "err", err)
