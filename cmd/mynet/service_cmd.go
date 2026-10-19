@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/gcostello02/mynet/internal/config"
@@ -42,8 +43,13 @@ func cmdService(args []string) {
 		fmt.Printf("  owner:     %s\n", spec.OwnerUser)
 		if *dry {
 			fmt.Println("(dry-run: no system files written)")
+		} else if runtime.GOOS == "darwin" {
+			fmt.Println("Plist written; launchd is NOT loaded yet (daemon will not run until bootstrap).")
+			fmt.Println("  verify: plutil -lint /Library/LaunchDaemons/com.mynet.daemon.plist")
+			fmt.Println("  start:  sudo mynet service start   # launchctl bootstrap system …")
+			fmt.Println("  note:   reboot loads plists under /Library/LaunchDaemons automatically")
 		} else {
-			fmt.Println("Next: sudo mynet service start")
+			fmt.Println("Next: sudo systemctl enable --now mynet-daemon  (or: mynet service start)")
 		}
 	case "uninstall":
 		fs := flag.NewFlagSet("service uninstall", flag.ExitOnError)
