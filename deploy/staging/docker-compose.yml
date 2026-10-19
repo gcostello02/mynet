@@ -37,7 +37,9 @@ services:
   # One-off admin / join-prep commands: docker compose run --rm admin-toolbox ...
   admin-toolbox:
     image: mynet-staging:latest
+    # compose run supplies: -lc "<command>" (do not prefix with bash — entrypoint is already bash)
     entrypoint: ["/bin/bash"]
+    command: ["-c", "exit 0"]
     environment:
       MYNET_STATE_DIR: /admin-state
     volumes:
