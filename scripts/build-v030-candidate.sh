@@ -19,18 +19,18 @@ else
 fi
 
 mkdir -p "$(dirname "$OUT")"
+BUILD_GOOS="${GOOS:-$(go env GOOS)}"
+BUILD_GOARCH="${GOARCH:-$(go env GOARCH)}"
+BUILD_CGO="${CGO_ENABLED:-0}"
 (
   cd "$BUILD_DIR"
-  GOOS="${GOOS:-$(go env GOOS)}"
-  GOARCH="${GOARCH:-$(go env GOARCH)}"
-  CGO_ENABLED="${CGO_ENABLED:-0}"
-  export GOOS GOARCH CGO_ENABLED
+  export GOOS="$BUILD_GOOS" GOARCH="$BUILD_GOARCH" CGO_ENABLED="$BUILD_CGO"
   go build -trimpath -ldflags="-s -w" -o "$OUT" ./cmd/mynet
 )
 
 rev="$(go version -m "$OUT" | awk -F= '/vcs.revision=/ {print $2}')"
 mod="$(go version -m "$OUT" | awk -F= '/vcs.modified=/ {print $2}')"
-echo "built $OUT GOOS=$GOOS GOARCH=$GOARCH vcs.revision=${rev} vcs.modified=${mod}"
+echo "built $OUT GOOS=$BUILD_GOOS GOARCH=$BUILD_GOARCH vcs.revision=${rev} vcs.modified=${mod}"
 [[ "$mod" == "false" ]] || { echo "vcs.modified must be false" >&2; exit 1; }
 [[ "$rev" == "$REV" ]] || { echo "vcs.revision $rev != expected $REV" >&2; exit 1; }
 
