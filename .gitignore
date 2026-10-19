@@ -14,3 +14,4 @@ server.log
 coverage.out
 coverage.html
 profiling-results/
+mynet

@@ -19,6 +19,9 @@ func DefaultStateDir() string {
 // ClientConfig holds client-side settings (no secrets beyond paths).
 type ClientConfig struct {
 	ServerURL string   `json:"server_url"`
+	NetworkID string   `json:"network_id,omitempty"`
+	CoordinatorFingerprint string `json:"coordinator_fingerprint,omitempty"`
+	CoordinatorPublicKey   string `json:"coordinator_public_key,omitempty"`
 	STUNURLs  []string `json:"stun_urls"`
 	TURNURLs  []string `json:"turn_urls"`
 	// ICEURLs, if non-empty, replaces the combined stun_urls + turn_urls list.
@@ -99,6 +102,14 @@ func LoadSessionToken(stateDir string) (*SessionToken, error) {
 		return nil, err
 	}
 	return &tok, nil
+}
+
+func ClearSessionToken(stateDir string) error {
+	err := os.Remove(SessionPath(stateDir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func SaveSessionToken(stateDir string, tok SessionToken) error {

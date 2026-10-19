@@ -83,7 +83,12 @@ func loadCoordinatorIdentity(dataPath string, expectPubB64, expectFingerprint st
 	return id, nil
 }
 
-// CanonicalCoordinatorProofMessage builds the signed proof payload.
+// CanonicalCoordinatorProofMessage builds the signed proof payload (v1, timestamp only).
 func CanonicalCoordinatorProofMessage(networkID, fingerprint string, timestamp int64) []byte {
 	return []byte(fmt.Sprintf("mynet-coordinator-proof-v1\n%s\n%s\n%d", networkID, fingerprint, timestamp))
+}
+
+// CanonicalCoordinatorProofMessageV2 binds a client challenge (replay resistance).
+func CanonicalCoordinatorProofMessageV2(networkID, fingerprint, challengeB64 string, timestamp int64) []byte {
+	return []byte(fmt.Sprintf("mynet-coordinator-proof-v2\n%s\n%s\n%s\n%d", networkID, fingerprint, challengeB64, timestamp))
 }
