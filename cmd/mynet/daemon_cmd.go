@@ -67,6 +67,7 @@ func runDaemon(log *slog.Logger) {
 
 	if config.RunVPNAtStart() || config.Supervised() {
 		go func() {
+			log.Info("supervised VPN up starting", "state_dir", dir)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			if err := node.Up(ctx); err != nil {
@@ -74,7 +75,9 @@ func runDaemon(log *slog.Logger) {
 				if config.Supervised() {
 					os.Exit(1)
 				}
+				return
 			}
+			log.Info("supervised VPN up complete", "state_dir", dir)
 		}()
 	}
 

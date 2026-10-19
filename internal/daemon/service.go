@@ -69,6 +69,9 @@ func (s *Service) Run() error {
 		releaseDaemonLock(lock)
 		return fmt.Errorf("ipc socket ownership: %w", err)
 	}
+	if s.Node != nil && s.Node.Logger != nil {
+		s.Node.Logger.Info("daemon IPC listening", "socket", path)
+	}
 
 	ps, err := StartProfileServer(s.StateDir)
 	if err != nil {
