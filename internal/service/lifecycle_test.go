@@ -11,7 +11,9 @@ import (
 )
 
 func TestShouldSpawnDetachedDaemonNoUnit(t *testing.T) {
-	dir := t.TempDir()
+	root := t.TempDir()
+	t.Setenv("MYNET_SERVICE_ROOT", root)
+	dir := filepath.Join(root, "state")
 	ok, _ := ShouldSpawnDetachedDaemon(dir, filepath.Join(dir, "service.json"))
 	if !ok {
 		t.Fatal("expected spawn allowed without unit")
