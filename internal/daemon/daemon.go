@@ -46,6 +46,7 @@ type Node struct {
 	vpnIP           netip.Addr
 	peers           map[string]PeerStatus
 	vpnPeerKeys     map[string]string // peer name -> wg public key hex
+	reconcileMu     sync.Mutex
 	peerCancel      context.CancelFunc
 	signalingCancel context.CancelFunc
 	netWatch        *NetWatcher

@@ -8,13 +8,18 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gcostello02/mynet/internal/invitation"
+	"github.com/gcostello02/mynet/internal/control"
 	"github.com/gcostello02/mynet/internal/control/server"
+	"github.com/gcostello02/mynet/internal/invitation"
 )
 
 func TestJoinThreeDevices(t *testing.T) {
 	invitation.AllowHTTPForTest = true
-	defer func() { invitation.AllowHTTPForTest = false }()
+	control.AllowInsecureHTTPForTest = true
+	defer func() {
+		invitation.AllowHTTPForTest = false
+		control.AllowInsecureHTTPForTest = false
+	}()
 
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "coord.db")
@@ -36,7 +41,9 @@ func TestJoinThreeDevices(t *testing.T) {
 	}
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
-	fp := srv.Store().Meta().Snapshot().CoordinatorFingerprint
+	meta := srv.Store().Meta().Snapshot()
+	fp := meta.CoordinatorFingerprint
+	coordPub := meta.CoordinatorPublicKeyB64
 
 	for i := 0; i < 3; i++ {
 		_, token, err := srv.Store().CreateInvitation(fmt.Sprintf("d%d", i), 3600, 1, "admin")
@@ -48,6 +55,7 @@ func TestJoinThreeDevices(t *testing.T) {
 			ServerURL:              ts.URL,
 			NetworkID:              "default",
 			CoordinatorFingerprint: fp,
+			CoordinatorPublicKey:   coordPub,
 			EnrollmentToken:        token,
 		}
 		sd := filepath.Join(dir, fmt.Sprintf("client%d", i))

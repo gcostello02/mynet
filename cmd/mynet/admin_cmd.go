@@ -35,7 +35,10 @@ func cmdAdmin(args []string) {
 			fmt.Fprint(os.Stderr, "Username: ")
 			fmt.Scanln(&username)
 		}
-		api := control.NewSecureAPIClient(*server)
+		api, err := control.NewSecureAPIClient(*server)
+		if err != nil {
+			fatal(err)
+		}
 		resp, err := api.AdminLogin(username, pass)
 		if err != nil {
 			fatal(err)
@@ -48,6 +51,11 @@ func cmdAdmin(args []string) {
 			fatal(err)
 		}
 		fmt.Println("Admin session saved (separate from device credentials).")
+	case "logout":
+		if err := config.ClearAdminSession(sd); err != nil {
+			fatal(err)
+		}
+		fmt.Println("Admin session cleared.")
 	case "status":
 		api, err := loadAdminAPI(sd)
 		if err != nil {
@@ -120,9 +128,11 @@ func cmdAdmin(args []string) {
 				CoordinatorPublicKey:   "",
 				EnrollmentToken:        resp["enrollment_token"],
 			}
-			if pub, err := control.NewSecureAPIClient(sess.ServerURL).NetworkPublic(); err == nil {
-				inv.NetworkID = pub.NetworkID
-				inv.CoordinatorPublicKey = pub.CoordinatorPublicKey
+			if pubAPI, err := control.NewSecureAPIClient(sess.ServerURL); err == nil {
+				if pub, err := pubAPI.NetworkPublic(); err == nil {
+					inv.NetworkID = pub.NetworkID
+					inv.CoordinatorPublicKey = pub.CoordinatorPublicKey
+				}
 			}
 			compact, err := inv.EncodeCompact()
 			if err != nil {
@@ -145,7 +155,10 @@ func loadAdminAPI(stateDir string) (*control.APIClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("admin not logged in (mynet admin login): %w", err)
 	}
-	api := control.NewSecureAPIClient(sess.ServerURL)
+	api, err := control.NewSecureAPIClient(sess.ServerURL)
+	if err != nil {
+		return nil, err
+	}
 	api.Token = sess.SessionToken
 	return api, nil
 }
@@ -161,6 +174,7 @@ func adminUsage() {
 	fmt.Println(`Admin commands (credentials in admin-session.json, not device session):
 
   mynet admin login --server <https-url> [--user <name>]
+  mynet admin logout
   mynet admin status
   mynet admin devices list
   mynet admin devices revoke <device_id>

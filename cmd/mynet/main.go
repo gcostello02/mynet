@@ -85,6 +85,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "--name is required")
 			os.Exit(2)
 		}
+		if daemon.DaemonReachable(stateDir()) {
+			fatal(fmt.Errorf("supervised daemon is running; stop it before join (%s)", client.JoinRecoveryHint))
+		}
 		if err := rt.Join(inv, client.JoinOptions{DeviceName: *name, Force: *force}); err != nil {
 			fatal(err)
 		}

@@ -15,7 +15,7 @@ Coordinator M1 enforces revocation on the **control plane** immediately. Clients
 ## Client responsibilities (M2 — implemented)
 
 1. On auth failure (401/403) during VPN config refresh, clear `session.json` via `Runtime.ClearDeviceSession()`.
-2. Daemon `startVPNReconcile` polls `GET /v1/vpn/config` every ~45s while VPN is up.
+2. Daemon `startVPNReconcile` polls `GET /v1/vpn/config` every **45s** (`VPNReconcileInterval`) while VPN is up. **Maximum expected revocation delay on connected peers: ~45s** (plus auth refresh latency), bounded by the reconcile ticker.
 3. Peers missing from config: `wgengine.RemovePeer`, `Runtime.DropPeerForRevocation` (ICE + link cache).
 4. New peers in config are added to WireGuard when they appear.
 5. Do not treat `signaling_online` as VPN reachability.
