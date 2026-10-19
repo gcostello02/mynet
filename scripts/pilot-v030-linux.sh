@@ -9,19 +9,6 @@ STATE="${MYNET_STATE_DIR:-${HOME}/.mynet}"
 OWNER="${MYNET_OWNER_USER:-${USER}}"
 AUDIT_REV="${MYNET_AUDIT_REV:-a4b6b3316af2407e8cdc59c5e02be9690c84ebf8}"
 
-rollback_supervision() {
-  # Safe even if install never completed or only partially wrote unit files.
-  if [[ -x "${LIVE}" ]]; then
-    sudo "${LIVE}" service stop 2>/dev/null || true
-    sudo -E "${LIVE}" service uninstall 2>/dev/null || true
-  fi
-  if systemctl list-unit-files mynet-daemon.service &>/dev/null; then
-    sudo systemctl disable --now mynet-daemon.service 2>/dev/null || true
-  fi
-  sudo rm -f /etc/systemd/system/mynet-daemon.service /etc/mynet/client.env 2>/dev/null || true
-  sudo systemctl daemon-reload 2>/dev/null || true
-}
-
 cat <<EOF
 === MyNet V0.3.0 pilot (mini PC) — interactive sudo required ===
 
@@ -67,9 +54,12 @@ Owner user:   ${OWNER}
 
 --- Rollback to manual V0.2.10 (run if pilot fails at any step after step 2) ---
 
-  # 1) Remove supervision first (partial install safe):
-  $(declare -f rollback_supervision)
-  rollback_supervision
+  # 1) Remove supervision first (safe if install only partially wrote files):
+  sudo ${LIVE} service stop 2>/dev/null || true
+  sudo -E ${LIVE} service uninstall 2>/dev/null || true
+  sudo systemctl disable --now mynet-daemon.service 2>/dev/null || true
+  sudo rm -f /etc/systemd/system/mynet-daemon.service /etc/mynet/client.env 2>/dev/null || true
+  sudo systemctl daemon-reload 2>/dev/null || true
 
   # 2) Restore known-good binary and manual daemon:
   cp -a ${BACKUP} ${LIVE}
