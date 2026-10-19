@@ -20,7 +20,7 @@ log() { echo "$*" | tee -a "$LOG"; }
 
 staging_admin_ensure "$ROOT"
 
-devices_before="$(staging_admin_run "$ROOT" devices list | jq '[.[] | select(.revoked == false)] | length')"
+devices_before="$(staging_admin_devices_json "$ROOT" | jq '[.[] | select(.revoked == false)] | length')"
 uses_before="$(staging_admin_run "$ROOT" invitations list | jq '[.[] | select(.label == "client-c") | .uses] | first // -1')"
 log "baseline: active_devices=${devices_before} client-c_invitation_uses=${uses_before}"
 
@@ -56,7 +56,7 @@ if ! echo "$replay_out" | grep -qiE 'http 410|exhausted|enrollment denied'; then
   exit 1
 fi
 
-devices_after="$(staging_admin_run "$ROOT" devices list | jq '[.[] | select(.revoked == false)] | length')"
+devices_after="$(staging_admin_devices_json "$ROOT" | jq '[.[] | select(.revoked == false)] | length')"
 uses_after="$(staging_admin_run "$ROOT" invitations list | jq '[.[] | select(.label == "client-c") | .uses] | first // -1')"
 if [[ "$devices_after" != "$devices_before" ]]; then
   log "FAIL: active device count changed ${devices_before} -> ${devices_after}"
@@ -66,7 +66,7 @@ if [[ "$uses_after" != "$uses_before" ]]; then
   log "FAIL: invitation uses changed ${uses_before} -> ${uses_after} (replay must not consume)"
   exit 1
 fi
-if staging_admin_run "$ROOT" devices list | jq -e '.[] | select(.name == "replay-probe")' >/dev/null 2>&1; then
+if staging_admin_devices_json "$ROOT" | jq -e '.[] | select(.name == "replay-probe")' >/dev/null 2>&1; then
   log "FAIL: replay-probe device was created"
   exit 1
 fi

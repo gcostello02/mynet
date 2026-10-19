@@ -79,12 +79,17 @@ func cmdAdmin(args []string) {
 		}
 		switch args[1] {
 		case "list":
+			fs := flag.NewFlagSet("admin devices list", flag.ExitOnError)
+			format := fs.String("format", "json", "output format: json")
+			_ = fs.Parse(args[2:])
 			devs, err := api.AdminListDevices()
 			if err != nil {
 				fatal(err)
 			}
 			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
+			if *format == "json" {
+				enc.SetIndent("", "  ")
+			}
 			_ = enc.Encode(devs)
 		case "revoke":
 			if len(args) < 3 {
@@ -94,7 +99,7 @@ func cmdAdmin(args []string) {
 			if err := api.AdminRevokeDevice(args[2]); err != nil {
 				fatal(err)
 			}
-			fmt.Println("Device revoked.")
+			fmt.Fprintln(os.Stderr, "Device revoked.")
 		default:
 			adminUsage()
 			os.Exit(2)
@@ -184,7 +189,7 @@ func adminUsage() {
   mynet admin login --server <https-url> [--user <name>]
   mynet admin logout
   mynet admin status
-  mynet admin devices list
+  mynet admin devices list [--format json]
   mynet admin devices revoke <device_id>
   mynet admin invitations list
   mynet admin invitations create [--label <name>] [--expires 86400] [--max-uses 1]`)

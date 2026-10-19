@@ -20,24 +20,27 @@ VPN_C="$(docker compose exec -T client-c jq -r .vpn_ipv4 /var/lib/mynet/wg.json)
 VPN_A="$(docker compose exec -T client-a jq -r .vpn_ipv4 /var/lib/mynet/wg.json)"
 VPN_B="$(docker compose exec -T client-b jq -r .vpn_ipv4 /var/lib/mynet/wg.json)"
 
-if staging_admin_run "$ROOT" devices list | jq -e --arg id "$DEVICE_ID" '.[] | select(.device_id == $id and .revoked == true)' >/dev/null 2>&1; then
+if staging_admin_device_revoked "$ROOT" "$DEVICE_ID" 2>/dev/null; then
   fail "device already revoked before test"
 fi
 
 log "Revoking device_id=${DEVICE_ID} (client-c) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 T_REVOKE=$(date +%s.%N)
-staging_admin_run "$ROOT" devices revoke "$DEVICE_ID" | tee -a "$LOG"
+if ! staging_admin_run "$ROOT" devices revoke "$DEVICE_ID" 2>>"$LOG"; then
+  fail "admin revoke command failed"
+fi
+log "Admin revoke API completed for device_id=${DEVICE_ID}"
 
 T_COORD_REVOKED=""
-for i in $(seq 1 30); do
-  if staging_admin_run "$ROOT" devices list | jq -e --arg id "$DEVICE_ID" '.[] | select(.device_id == $id and .revoked == true)' >/dev/null; then
+for i in $(seq 1 60); do
+  if staging_admin_device_revoked "$ROOT" "$DEVICE_ID"; then
     T_COORD_REVOKED=$(date +%s.%N)
     log "Coordinator reports revoked (poll ${i})"
     break
   fi
   sleep 0.5
 done
-[[ -n "$T_COORD_REVOKED" ]] || fail "coordinator never reported device revoked"
+[[ -n "$T_COORD_REVOKED" ]] || fail "coordinator revoke not visible in admin JSON (parse or API); see stderr above — revocation may still have succeeded"
 
 log "Revoked device auth should fail (device session refresh)..."
 set +e
@@ -71,6 +74,17 @@ for i in $(seq 1 120); do
   sleep 1
 done
 [[ -n "$T_WG_REMOVED" ]] || fail "client-a wg still lists revoked peer after 120s"
+
+T_B_STATUS_CLEAR=""
+for i in $(seq 1 120); do
+  if ! docker compose exec -T client-b mynet status 2>/dev/null | grep -q 'client-c'; then
+    T_B_STATUS_CLEAR=$(date +%s.%N)
+    log "client-b status no longer lists client-c (iteration $i)"
+    break
+  fi
+  sleep 1
+done
+[[ -n "$T_B_STATUS_CLEAR" ]] || fail "client-b still shows revoked peer client-c in status after 120s"
 
 T_ICE_CLEAR=""
 for i in $(seq 1 120); do

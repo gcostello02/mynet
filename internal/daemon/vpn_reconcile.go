@@ -72,8 +72,19 @@ func (n *Node) reconcileVPNPeers() {
 
 	for name, pub := range current {
 		if _, ok := want[name]; !ok {
+			var peerIP netip.Addr
+			n.mu.Lock()
+			if st, ok := n.peers[name]; ok && st.VPNIP != "" {
+				peerIP, _ = netip.ParseAddr(st.VPNIP)
+			}
+			bind := n.bind
+			n.mu.Unlock()
+			n.stopVPNPeerWorker(name)
 			_ = engine.RemovePeer(pub)
 			rt.DropPeerForRevocation(name)
+			if bind != nil && peerIP.IsValid() {
+				bind.RemovePeer(peerIP)
+			}
 			n.mu.Lock()
 			delete(n.vpnPeerKeys, name)
 			delete(n.peers, name)
