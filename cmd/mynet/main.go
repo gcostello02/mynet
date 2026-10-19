@@ -154,6 +154,21 @@ func main() {
 		fs := flag.NewFlagSet("ping", flag.ExitOnError)
 		peer := fs.String("peer", "", "peer device name")
 		_ = fs.Parse(os.Args[2:])
+		if *peer == "" {
+			fmt.Fprintln(os.Stderr, "--peer is required")
+			os.Exit(2)
+		}
+		if daemon.DaemonReachable(stateDir()) {
+			resp, err := daemon.CallIPCWithPeer(stateDir(), "peer_ping", *peer)
+			if err != nil {
+				fatal(err)
+			}
+			if !resp.OK {
+				fatal(fmt.Errorf("%s", resp.Error))
+			}
+			fmt.Printf("RTT: %s (vpn icmp)\n", formatRTT(time.Duration(resp.PingRTTMs*float64(time.Millisecond))))
+			break
+		}
 		rtt, err := rt.Ping(*peer)
 		if err != nil {
 			fatal(err)
