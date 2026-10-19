@@ -88,6 +88,8 @@ type Runtime struct {
 	vpnWait       map[string]chan error
 	vpnConnecting map[string]bool
 
+	peerOnlineLast map[string]bool // last known coordinator online bit per peer name
+
 	peerICEMu              sync.Mutex
 	peerICEGen             uint64
 	peerICECancel          map[string]peerICEAttempt
@@ -128,6 +130,7 @@ func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
 		pendingSignals: make(map[string][]control.WSMessage),
 		incomingICE:     make(map[string]bool),
 		peerInFlightICE: make(map[string]string),
+		peerOnlineLast:  make(map[string]bool),
 		connTiming:     newConnTiming(),
 		recovery:       newRecoveryTracker(),
 	}
@@ -397,12 +400,7 @@ func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) boo
 				iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "already_transport"})
 				return false
 			}
-			inflight := r.peerInFlightICE[ready.PeerName]
-			if inflight == "" || inflight != ready.SessionID {
-				r.mu.Unlock()
-				iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "stale_session"})
-				return false
-			}
+			r.supersedeVPNPeerLinkLocked(ready.PeerName, l, "coordinator_new_session")
 		}
 	}
 	if ready.PeerName != "" {
@@ -456,6 +454,9 @@ func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) boo
 }
 
 func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
+	if ready.PeerName != "" {
+		r.syncPeerPresence(ready.PeerName)
+	}
 	peerLock := r.peerICELock(ready.PeerName)
 	peerLock.Lock()
 	if !r.beginIncomingICESession(ready) {

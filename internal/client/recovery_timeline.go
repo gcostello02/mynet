@@ -107,12 +107,21 @@ func (rt *recoveryTracker) noteVPNReady(peer string) {
 
 func (rt *recoveryTracker) noteTransportRecovery(peer string) {
 	rt.mu.Lock()
-	t := rt.ensure(peer)
+	t := rt.peers[peer]
+	if t != nil && t.State == "stable" && !t.SuccessAt.IsZero() {
+		t = &RecoveryTimeline{
+			State:          "recovering",
+			CycleStartedAt: time.Now(),
+		}
+		rt.peers[peer] = t
+	} else {
+		t = rt.ensure(peer)
+		if t.CycleStartedAt.IsZero() {
+			t.CycleStartedAt = time.Now()
+		}
+	}
 	t.TransportRecoveries++
 	t.State = "recovering"
-	if t.CycleStartedAt.IsZero() {
-		t.CycleStartedAt = time.Now()
-	}
 	rt.mu.Unlock()
 }
 
