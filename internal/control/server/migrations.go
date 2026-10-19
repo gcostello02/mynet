@@ -73,7 +73,7 @@ func migrateCoordinatorDB(db *sql.DB) error {
 }
 
 func openCoordinatorDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}

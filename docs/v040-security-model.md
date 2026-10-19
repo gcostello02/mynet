@@ -64,9 +64,11 @@ Threat: **impersonated coordinator** (DNS hijack, rogue AP captive portal).
 Mitigations:
 
 1. TLS with publicly trusted CA (operator responsibility).
-2. V0.4 (M1): **`GET /v1/network/public`** publishes `coordinator_fingerprint` (SHA-256 of coordinator Ed25519 public key). Invitation API returns the same fingerprint. **Coordinator private key is generated at setup and not persisted** — M1 does not sign attestations; trust is TOFU via out-of-band fingerprint (invitation channel) compared to TLS fetch in M2.
-3. MITM risk: if the client learns the fingerprint only from the same hostile HTTPS endpoint, substitution is still possible. **M2 must compare invitation fingerprint to an independently obtained value** (QR, admin console copy, etc.).
-4. Later: optional signed network documents if coordinator private key is stored securely; optional `~/.mynet/trust.json` pin file.
+2. V0.4 (M1.1): **`GET /v1/network/public`** publishes fingerprint and public key. Private key is stored in **`coordinator.ed25519`** (mode `0600`) next to the SQLite file; coordinator refuses start if missing/corrupt after setup.
+3. **`POST /v1/network/proof`**: coordinator signs `mynet-coordinator-proof-v1` with timestamp skew — proves possession of private key matching the published public key (complements TLS).
+4. **HTTPS + Ed25519**: TLS authenticates the hostname; proof + fingerprint pin authenticates the **network** (prevents wrong coordinator behind valid TLS). M2 must obtain fingerprint/public key from the invitation (OOB) and verify proof or public key match.
+5. MITM if invitation and TLS come from the same attacker remains a risk; OOB invitation delivery is required.
+6. Key rotation: not automated; new setup generates new keys — operators must re-invite devices and update pins.
 
 ### Address allocation
 

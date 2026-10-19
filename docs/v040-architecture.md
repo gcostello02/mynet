@@ -36,7 +36,11 @@ Audit of the repository as of post–V0.3.0 (always-on VPN, libexec macOS, syste
 
 **Admin (M1):** `POST /v1/admin/setup`, `POST /v1/admin/login`, `POST /v1/admin/logout`, `GET /v1/admin/status`, `GET /v1/admin/devices`, `PATCH /v1/admin/devices/{id}`, `POST /v1/admin/devices/{id}/revoke`, `GET|POST /v1/admin/invitations`, `DELETE /v1/admin/invitations/{id}`, `PUT /v1/admin/network/legacy-enrollment`, `GET /v1/network/public`.
 
-**Enrollment order (M1):** validate invitation/legacy gate → verify device signature → persist device → redeem invitation use.
+**Enrollment order (M1.1):** verify device signature → legacy gate or fingerprint gate → **SQLite transaction** (invitation validate + use++ + device insert) for token enroll.
+
+**Coordinator files:** `{data_dir}/devices.db` (or configured path), `{data_dir}/coordinator.ed25519`, WAL sidecars when using WAL mode.
+
+**API:** `POST /v1/network/proof` — coordinator identity proof for M2.
 
 **Still not in M1:** dashboard UI, client `mynet join`, coordinator install wizard.
 

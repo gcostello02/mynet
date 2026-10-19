@@ -17,7 +17,7 @@ func (s *Server) validateEnrollmentGate(req controlEnrollFields) error {
 		if !VerifyCoordinatorFingerprint(meta.CoordinatorPublicKeyB64, req.CoordinatorFingerprint) {
 			return errors.New("coordinator fingerprint mismatch")
 		}
-		return s.store.CheckInvitation(req.EnrollmentToken)
+		return nil
 	}
 	if meta.SetupComplete && !meta.LegacyEnrollmentEnabled {
 		return errors.New("invitation required")

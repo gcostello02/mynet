@@ -75,12 +75,13 @@ func (s *Server) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusConflict, "admin create failed")
 		return
 	}
-	if err := completeSetup(s.store.sqlDB, s.store.meta, id, req.NetworkDisplayName, req.PublicServerURL); err != nil {
+	if err := completeSetup(s.store.sqlDB, s.store.meta, id, req.NetworkDisplayName, req.PublicServerURL, s.store.dbPath); err != nil {
 		httpError(w, http.StatusInternalServerError, "setup failed")
 		return
 	}
 	s.store.admins[admin.ID] = admin
 	s.store.adminByUser[admin.Username] = admin.ID
+	s.coordinatorIdentity = id
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"coordinator_fingerprint": id.Fingerprint,
 		"admin_id":                admin.ID,
