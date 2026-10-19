@@ -71,15 +71,37 @@ Artifacts: `deploy/staging/artifacts/*.txt`, `*-results.txt`.
 - [ ] Revoke client-c: auth fails; peer removed from others; measured delay logged in `revoke-results.txt`
 - [ ] Authorized pair A↔B still pings after revoke
 
+## Partial-run recovery
+
+If acceptance stops after coordinator bootstrap (e.g. invitation step failed):
+
+1. **Resume** (same coordinator DB and secret):
+   ```bash
+   cd deploy/staging
+   export COMPOSE_PROJECT_NAME=mynet-m2-staging
+   # secrets/server.secret must match the running coord-data volume
+   docker compose up -d coordinator proxy
+   ./scripts/enroll-three.sh
+   ```
+2. **Full staging reset** (only project `mynet-m2-staging`):
+   ```bash
+   MYNET_STAGING_RESET=1 ./scripts/reset-staging.sh
+   MYNET_STAGING_PURGE_VOLUMES=1 ./scripts/teardown.sh   # optional: wipe coord-data
+   ```
+
+`bootstrap-coordinator.sh` skips setup when `/v1/network/public` already responds. `enroll-three.sh` skips existing `artifacts/inv-*.txt` and reuses `admin-state/admin-session.json`.
+
+Admin commands use `docker compose run admin-toolbox` (not `docker run --add-host`; unsupported on Compose v5).
+
 ## Cleanup
 
 ```bash
 ./scripts/teardown.sh
-# optional: remove generated certs and artifacts
+MYNET_STAGING_PURGE_VOLUMES=1 ./scripts/teardown.sh
 MYNET_STAGING_PURGE_ARTIFACTS=1 ./scripts/teardown.sh
 ```
 
-Partial failure: `teardown.sh` is idempotent; remove `deploy/staging/admin-state` manually if admin login left state.
+Partial failure: see `artifacts/last-error.txt` after a failed `run-acceptance.sh`.
 
 ## Known limitations
 

@@ -4,3 +4,4 @@ artifacts/*
 !artifacts/.gitkeep
 .env
 secrets/
+admin-state/
