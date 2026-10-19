@@ -41,6 +41,9 @@ func Install(opts InstallOptions) (InstallSpec, error) {
 		return InstallSpec{}, err
 	}
 	if opts.OwnerUser == "" {
+		opts.OwnerUser = config.OwnerUsername()
+	}
+	if opts.OwnerUser == "" {
 		opts.OwnerUser = os.Getenv("USER")
 	}
 	if opts.OwnerUser == "" {
@@ -168,7 +171,29 @@ func Uninstall(dryRun bool) error {
 	case "darwin":
 		_ = exec.Command("launchctl", "bootout", "system", layout.LaunchDaemonPlist).Run()
 		_ = os.Remove(layout.LaunchDaemonPlist)
+		_ = os.Remove(layout.LaunchDaemonEnv)
 	}
-	_ = os.Remove(LocalSpecPath())
+	for _, p := range localSpecPathsToRemove() {
+		_ = os.Remove(p)
+	}
 	return nil
+}
+
+// localSpecPathsToRemove returns user metadata paths for uninstall (sudo-safe).
+func localSpecPathsToRemove() []string {
+	var paths []string
+	if u := config.OwnerUsername(); u != "" {
+		paths = append(paths, LocalSpecPathForOwner(u))
+	}
+	paths = append(paths, LocalSpecPath())
+	seen := make(map[string]bool)
+	var out []string
+	for _, p := range paths {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
 }
