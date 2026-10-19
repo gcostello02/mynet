@@ -10,6 +10,12 @@ func (r *Runtime) cancelPeerICEAttempt(peerName string) {
 	if peerName == "" {
 		return
 	}
+	r.mu.Lock()
+	if r.peerICESupersedeAllow == nil {
+		r.peerICESupersedeAllow = make(map[string]bool)
+	}
+	r.peerICESupersedeAllow[peerName] = true
+	r.mu.Unlock()
 	r.peerICEMu.Lock()
 	if attempt, ok := r.peerICECancel[peerName]; ok {
 		attempt.cancel()
