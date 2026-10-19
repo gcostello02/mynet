@@ -118,6 +118,10 @@ func TestSystemdRestartPolicy(t *testing.T) {
 	if !containsAll(u, "Restart=on-failure", "StartLimitBurst=5", "TimeoutStopSec=30") {
 		t.Fatalf("missing systemd policy")
 	}
+	ok, detail := StartLimitKeysInUnitSection(u)
+	if !ok {
+		t.Fatalf("start limits: %s", detail)
+	}
 }
 
 func TestSystemdUnitPassesAnalyzeVerify(t *testing.T) {
