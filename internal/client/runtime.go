@@ -84,6 +84,10 @@ type Runtime struct {
 	vpnWait       map[string]chan error
 	vpnConnecting map[string]bool
 
+	peerICEMu     sync.Mutex
+	peerICEGen    uint64
+	peerICECancel map[string]peerICEAttempt
+
 	signalingMu         sync.Mutex
 	signalingRunning    bool
 	signalingConnecting bool
@@ -331,6 +335,7 @@ func (r *Runtime) ConnectWithOptions(peerName string, opts ConnectOptions) error
 	r.lastRemoteCandidates = nil
 	r.mu.Unlock()
 
+	r.cancelPeerICEAttempt(peerName)
 	_, err := r.api.CreateSession(peerName)
 	if err != nil {
 		r.mu.Lock()
@@ -353,25 +358,15 @@ func (r *Runtime) ConnectWithOptions(peerName string, opts ConnectOptions) error
 	}
 }
 
-func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
-	iceTrace("session_ready", map[string]string{
-		"session_id": ready.SessionID,
-		"peer":       ready.PeerName,
-		"role":       ready.Role,
-	})
+// beginIncomingICESession registers session_ready handling. Returns false if this session is already in flight.
+func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) bool {
 	r.mu.Lock()
 	if r.incomingICE[ready.SessionID] {
 		r.mu.Unlock()
 		iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "already_handling"})
-		return
+		return false
 	}
 	r.incomingICE[ready.SessionID] = true
-	if r.activeSession == ready.SessionID && (r.connState == StateConnecting || r.connState == StateConnected) {
-		delete(r.incomingICE, ready.SessionID)
-		r.mu.Unlock()
-		iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "already_active"})
-		return
-	}
 	if r.activeSession != "" && r.activeSession != ready.SessionID {
 		if r.iceCancel != nil {
 			r.iceCancel()
@@ -391,6 +386,18 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 	r.peerName = ready.PeerName
 	r.connState = StateConnecting
 	r.mu.Unlock()
+	return true
+}
+
+func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
+	iceTrace("session_ready", map[string]string{
+		"session_id": ready.SessionID,
+		"peer":       ready.PeerName,
+		"role":       ready.Role,
+	})
+	if !r.beginIncomingICESession(ready) {
+		return
+	}
 	controlling := ready.Role == "controlling"
 	r.mu.Lock()
 	opts := r.connectOpts
@@ -400,7 +407,9 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 		delete(r.incomingICE, ready.SessionID)
 		r.mu.Unlock()
 	}()
-	conn, sess, path, err := r.runICESession(ready.SessionID, ready.PeerName, controlling, opts)
+	iceCtx, endICE := r.beginPeerICEAttempt(ready.PeerName)
+	defer endICE()
+	conn, sess, path, err := r.runICESession(iceCtx, ready.SessionID, ready.PeerName, controlling, opts)
 	if err != nil {
 		r.Logger.Error("ICE session failed", "session", ready.SessionID, "controlling", controlling, "err", err)
 		r.recordConnError(ready.PeerName, ready.SessionID, "ice_session", err)
@@ -414,6 +423,14 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 		r.mu.Unlock()
 		if r.vpnMode {
 			r.failPeerVPN(ready.PeerName, err)
+			r.mu.Lock()
+			if r.activeSession == ready.SessionID {
+				r.activeSession = ""
+			}
+			if r.connState == StateConnecting {
+				r.connState = StateOnline
+			}
+			r.mu.Unlock()
 		}
 	} else if r.vpnMode && conn != nil {
 		r.storePeerLink(ready.PeerName, ready.SessionID, conn, path, sess)
@@ -443,7 +460,7 @@ type signalState struct {
 	peerGatherDone  bool
 }
 
-func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, opts ConnectOptions) (net.Conn, *icepkg.Session, icepkg.PathInfo, error) {
+func (r *Runtime) runICESession(iceCtx context.Context, sessionID, peerName string, controlling bool, opts ConnectOptions) (net.Conn, *icepkg.Session, icepkg.PathInfo, error) {
 	iceTrace("ice_begin", map[string]string{
 		"session_id":  sessionID,
 		"peer":        peerName,
@@ -568,17 +585,37 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 
 	deadline := time.Now().Add(icepkg.ConnectTimeout)
 	for time.Now().Before(deadline) {
+		if err := iceCtx.Err(); err != nil {
+			iceTrace("ice_session_superseded", map[string]string{"session_id": sessionID})
+			if attempt != nil {
+				r.connTiming.fail(attempt, err.Error())
+			}
+			return nil, nil, icepkg.PathInfo{}, fmt.Errorf("ice session superseded: %w", err)
+		}
 		sig.mu.Lock()
 		ready := sig.remoteCredReady
 		sig.mu.Unlock()
 		if ready {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-iceCtx.Done():
+			if attempt != nil {
+				r.connTiming.fail(attempt, iceCtx.Err().Error())
+			}
+			return nil, nil, icepkg.PathInfo{}, fmt.Errorf("ice session superseded: %w", iceCtx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 	sig.mu.Lock()
 	if !sig.remoteCredReady {
 		sig.mu.Unlock()
+		if err := iceCtx.Err(); err != nil {
+			if attempt != nil {
+				r.connTiming.fail(attempt, err.Error())
+			}
+			return nil, nil, icepkg.PathInfo{}, fmt.Errorf("ice session superseded: %w", err)
+		}
 		iceTrace("ice_remote_credentials_timeout", map[string]string{"session_id": sessionID})
 		err := errors.New("timed out waiting for peer ICE credentials")
 		if attempt != nil {
@@ -644,16 +681,16 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		}
 	}
 
-	iceCtx, iceCancel := context.WithTimeout(context.Background(), icepkg.ConnectTimeout)
+	dialCtx, dialCancel := context.WithTimeout(iceCtx, icepkg.ConnectTimeout)
 	r.mu.Lock()
 	if r.iceCancel != nil && r.iceCancelFor != sessionID {
 		r.iceCancel()
 	}
-	r.iceCancel = iceCancel
+	r.iceCancel = dialCancel
 	r.iceCancelFor = sessionID
 	r.mu.Unlock()
 	defer func() {
-		iceCancel()
+		dialCancel()
 		r.mu.Lock()
 		if r.iceCancelFor == sessionID {
 			r.iceCancel = nil
@@ -670,7 +707,7 @@ func (r *Runtime) runICESession(sessionID, peerName string, controlling bool, op
 		"agent_state": sess.AgentState(),
 		"controlling": boolString(controlling),
 	})
-	conn, err := sess.Connect(iceCtx, remoteUfrag, remotePwd)
+	conn, err := sess.Connect(dialCtx, remoteUfrag, remotePwd)
 	if err != nil {
 		iceTrace("ice_connect_failed", map[string]string{
 			"session_id":  sessionID,

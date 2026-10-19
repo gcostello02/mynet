@@ -99,6 +99,7 @@ func (r *Runtime) ConnectPeerVPNContext(ctx context.Context, peerName string) (*
 		r.mu.Unlock()
 	}()
 
+	r.cancelPeerICEAttempt(peerName)
 	_, err := r.api.CreateSession(peerName)
 	if err != nil {
 		return nil, err
