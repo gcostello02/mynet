@@ -70,7 +70,11 @@ type Runtime struct {
 	iceCancel    context.CancelFunc
 	iceCancelFor string
 
-	incomingICE map[string]bool
+	incomingICE     map[string]bool
+	peerInFlightICE map[string]string // peer name -> session ID currently negotiating (VPN + app ICE)
+
+	peerICELockMu    sync.Mutex
+	peerICEHandleMu  map[string]*sync.Mutex
 
 	signalMu       sync.Mutex
 	signalHandlers map[string]func(control.WSMessage)
@@ -84,9 +88,10 @@ type Runtime struct {
 	vpnWait       map[string]chan error
 	vpnConnecting map[string]bool
 
-	peerICEMu     sync.Mutex
-	peerICEGen    uint64
-	peerICECancel map[string]peerICEAttempt
+	peerICEMu              sync.Mutex
+	peerICEGen             uint64
+	peerICECancel          map[string]peerICEAttempt
+	peerICESupersedeAllow  map[string]bool // set by cancelPeerICEAttempt before CreateSession (initiator)
 
 	signalingMu         sync.Mutex
 	signalingRunning    bool
@@ -121,7 +126,8 @@ func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
 		connState:      StateDisconnected,
 		signalHandlers: make(map[string]func(control.WSMessage)),
 		pendingSignals: make(map[string][]control.WSMessage),
-		incomingICE:    make(map[string]bool),
+		incomingICE:     make(map[string]bool),
+		peerInFlightICE: make(map[string]string),
 		connTiming:     newConnTiming(),
 		recovery:       newRecoveryTracker(),
 	}
@@ -358,6 +364,24 @@ func (r *Runtime) ConnectWithOptions(peerName string, opts ConnectOptions) error
 	}
 }
 
+func (r *Runtime) peerICELock(peerName string) *sync.Mutex {
+	key := peerName
+	if key == "" {
+		key = "_"
+	}
+	r.peerICELockMu.Lock()
+	if r.peerICEHandleMu == nil {
+		r.peerICEHandleMu = make(map[string]*sync.Mutex)
+	}
+	m, ok := r.peerICEHandleMu[key]
+	if !ok {
+		m = &sync.Mutex{}
+		r.peerICEHandleMu[key] = m
+	}
+	r.peerICELockMu.Unlock()
+	return m
+}
+
 // beginIncomingICESession registers session_ready handling. Returns false if this session is already in flight.
 func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) bool {
 	r.mu.Lock()
@@ -366,7 +390,49 @@ func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) boo
 		iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "already_handling"})
 		return false
 	}
+	if ready.PeerName != "" && r.vpnMode {
+		if l, ok := r.peerLinks[ready.PeerName]; ok && l != nil && l.Conn != nil && !r.peerLinkStaleLocked(l) {
+			if l.SessionID == ready.SessionID {
+				r.mu.Unlock()
+				iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "already_transport"})
+				return false
+			}
+			inflight := r.peerInFlightICE[ready.PeerName]
+			if inflight == "" || inflight != ready.SessionID {
+				r.mu.Unlock()
+				iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "stale_session"})
+				return false
+			}
+		}
+	}
+	if ready.PeerName != "" {
+		inflight := r.peerInFlightICE[ready.PeerName]
+		if inflight != "" && inflight != ready.SessionID {
+			if r.incomingICE[inflight] {
+				allow := ready.Role == "controlled"
+				if ready.Role == "controlling" && r.peerICESupersedeAllow != nil && r.peerICESupersedeAllow[ready.PeerName] {
+					allow = true
+					r.peerICESupersedeAllow[ready.PeerName] = false
+				}
+				if !allow {
+					r.mu.Unlock()
+					iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "stale_session_inflight"})
+					return false
+				}
+				r.mu.Unlock()
+				r.cancelPeerICEAttempt(ready.PeerName)
+				r.mu.Lock()
+			} else {
+				r.mu.Unlock()
+				iceTrace("session_ready_skip", map[string]string{"session_id": ready.SessionID, "reason": "superseded_session"})
+				return false
+			}
+		}
+	}
 	r.incomingICE[ready.SessionID] = true
+	if ready.PeerName != "" {
+		r.peerInFlightICE[ready.PeerName] = ready.SessionID
+	}
 	if r.activeSession != "" && r.activeSession != ready.SessionID {
 		if r.iceCancel != nil {
 			r.iceCancel()
@@ -390,14 +456,19 @@ func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) boo
 }
 
 func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
+	peerLock := r.peerICELock(ready.PeerName)
+	peerLock.Lock()
+	if !r.beginIncomingICESession(ready) {
+		peerLock.Unlock()
+		return
+	}
+	peerLock.Unlock()
+
 	iceTrace("session_ready", map[string]string{
 		"session_id": ready.SessionID,
 		"peer":       ready.PeerName,
 		"role":       ready.Role,
 	})
-	if !r.beginIncomingICESession(ready) {
-		return
-	}
 	controlling := ready.Role == "controlling"
 	r.mu.Lock()
 	opts := r.connectOpts
@@ -405,6 +476,9 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 	defer func() {
 		r.mu.Lock()
 		delete(r.incomingICE, ready.SessionID)
+		if ready.PeerName != "" && r.peerInFlightICE[ready.PeerName] == ready.SessionID {
+			delete(r.peerInFlightICE, ready.PeerName)
+		}
 		r.mu.Unlock()
 	}()
 	iceCtx, endICE := r.beginPeerICEAttempt(ready.PeerName)
@@ -433,7 +507,15 @@ func (r *Runtime) handleIncomingSession(ready control.SessionReadyPayload) {
 			r.mu.Unlock()
 		}
 	} else if r.vpnMode && conn != nil {
-		r.storePeerLink(ready.PeerName, ready.SessionID, conn, path, sess)
+		if r.vpnPeerLinkAdoptable(ready.PeerName, ready.SessionID) {
+			r.storePeerLink(ready.PeerName, ready.SessionID, conn, path, sess)
+		} else {
+			_ = conn.Close()
+			if sess != nil {
+				_ = sess.Close()
+			}
+			iceTrace("ice_store_skipped", map[string]string{"session_id": ready.SessionID, "reason": "stale_transport"})
+		}
 	}
 	if controlling && !r.vpnMode {
 		r.mu.Lock()

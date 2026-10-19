@@ -212,18 +212,31 @@ func (r *Runtime) PeerLinkLivePath(peerName string) (icepkg.PathInfo, bool) {
 	return l.Path, true
 }
 
-// PeerLinkStale reports whether the cached link should not be reused.
-func (r *Runtime) PeerLinkStale(peerName string) bool {
-	r.mu.Lock()
-	l, ok := r.peerLinks[peerName]
-	r.mu.Unlock()
-	if !ok || l == nil || l.Conn == nil {
+func (r *Runtime) peerLinkStaleLocked(l *PeerLink) bool {
+	if l == nil || l.Conn == nil {
 		return true
 	}
 	if l.Session != nil && icepkg.StateTerminal(l.Session.State()) {
 		return true
 	}
 	return false
+}
+
+// PeerLinkStale reports whether the cached link should not be reused.
+func (r *Runtime) PeerLinkStale(peerName string) bool {
+	r.mu.Lock()
+	l, ok := r.peerLinks[peerName]
+	stale := !ok || r.peerLinkStaleLocked(l)
+	r.mu.Unlock()
+	return stale
+}
+
+// vpnPeerLinkAdoptable reports whether a completed ICE transport may be installed (caller holds no lock).
+func (r *Runtime) vpnPeerLinkAdoptable(peerName, sessionID string) bool {
+	r.mu.Lock()
+	ok := r.peerInFlightICE[peerName] == sessionID
+	r.mu.Unlock()
+	return ok
 }
 
 func (r *Runtime) failPeerVPN(peerName string, err error) {
