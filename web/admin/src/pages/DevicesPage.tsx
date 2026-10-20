@@ -1,30 +1,48 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { MonitorSmartphone, Search } from "lucide-react";
 import { ApiError, api, type Device } from "../api/client";
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { StatusBadge } from "../components/StatusBadge";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Card } from "../components/ui/Card";
+import { Badge } from "../components/ui/Badge";
+import { EmptyState } from "../components/ui/EmptyState";
+import { TableSkeleton } from "../components/ui/Skeleton";
+import { Drawer } from "../components/ui/Drawer";
+import { Modal } from "../components/ui/Modal";
+import { Button } from "../components/ui/Button";
+import { formatEnrolled } from "../lib/devices";
+import { useToast } from "../hooks/useToast";
+
+function signalingBadge(d: Device) {
+  if (d.revoked) return <Badge tone="danger">Revoked</Badge>;
+  return (
+    <Badge tone={d.signaling_online ? "success" : "neutral"}>
+      {d.signaling_online ? "Signaling online" : "Signaling offline"}
+    </Badge>
+  );
+}
 
 export function DevicesPage() {
+  const { push } = useToast();
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "revoked">("all");
   const [selected, setSelected] = useState<Device | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<Device | null>(null);
   const [revokeBusy, setRevokeBusy] = useState(false);
-  const [revokeMsg, setRevokeMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       setDevices(await api.devices());
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load devices");
     }
-  }
+  }, []);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   const filtered = useMemo(() => {
     if (!devices) return [];
@@ -40,126 +58,166 @@ export function DevicesPage() {
   async function confirmRevoke() {
     if (!revokeTarget) return;
     setRevokeBusy(true);
-    setRevokeMsg(null);
     try {
       await api.revokeDevice(revokeTarget.device_id);
-      setRevokeMsg(`Device “${revokeTarget.name}” was revoked.`);
+      push(`Device “${revokeTarget.name}” revoked.`);
       setRevokeTarget(null);
       setSelected(null);
       await load();
     } catch (e) {
-      setRevokeMsg(e instanceof ApiError ? e.message : "Revocation failed");
+      push(e instanceof ApiError ? e.message : "Revocation failed", "error");
     } finally {
       setRevokeBusy(false);
     }
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Devices</h1>
-          <p className="text-sm text-zinc-400">Signaling status only — not WireGuard connectivity.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <input
-            placeholder="Search name or ID"
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm light:border-zinc-300 light:bg-white"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+    <div>
+      <PageHeader
+        title="Devices"
+        description="Inventory from the coordinator. Signaling status is not WireGuard connectivity."
+      />
+
+      <Card className="mb-4" padding>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-fg-subtle)]" aria-hidden />
+            <input
+              type="search"
+              placeholder="Search by name or device ID"
+              aria-label="Search devices"
+              className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] py-2 pl-9 pr-3 text-sm"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           <select
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm light:border-zinc-300 light:bg-white"
+            className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm sm:w-44"
             value={filter}
             onChange={(e) => setFilter(e.target.value as typeof filter)}
+            aria-label="Filter devices"
           >
-            <option value="all">All</option>
-            <option value="active">Active</option>
+            <option value="all">All devices</option>
+            <option value="active">Active only</option>
             <option value="revoked">Revoked</option>
           </select>
         </div>
-      </div>
-      {error && <p className="text-red-300" role="alert">{error}</p>}
-      {revokeMsg && <p className="text-sm text-emerald-300" role="status">{revokeMsg}</p>}
-      {!devices ? (
-        <p className="text-zinc-500">Loading devices…</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-zinc-500">No devices match your filters.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-zinc-800 light:border-zinc-200">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-zinc-900/80 text-zinc-400 light:bg-zinc-50">
-              <tr>
-                <th className="px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 font-medium">VPN IP</th>
-                <th className="px-3 py-2 font-medium">Signaling</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Enrolled</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((d) => (
-                <tr
-                  key={d.device_id}
-                  className="cursor-pointer border-t border-zinc-800 hover:bg-zinc-900/50 light:border-zinc-200"
-                  onClick={() => setSelected(d)}
-                >
-                  <td className="px-3 py-2 font-medium">{d.name}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{d.vpn_ipv4 || "—"}</td>
-                  <td className="px-3 py-2">
-                    <StatusBadge
-                      label={d.signaling_online ? "Online" : "Offline"}
-                      tone={d.signaling_online ? "ok" : "muted"}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <StatusBadge label={d.revoked ? "Revoked" : "Active"} tone={d.revoked ? "bad" : "ok"} />
-                  </td>
-                  <td className="px-3 py-2 text-zinc-400">{new Date(d.enrolled_at).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      </Card>
+
+      {error && (
+        <p className="mb-4 rounded-[var(--radius-md)] border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300" role="alert">
+          {error}
+        </p>
       )}
-      {selected && (
-        <aside className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 light:border-zinc-200 light:bg-white">
-          <div className="flex items-start justify-between gap-2">
-            <h2 className="text-lg font-semibold">{selected.name}</h2>
-            <button type="button" className="text-sm text-zinc-400" onClick={() => setSelected(null)}>
-              Close
-            </button>
+
+      <Card padding={false}>
+        {!devices ? (
+          <div className="p-4">
+            <TableSkeleton />
           </div>
-          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="text-zinc-500">Device ID</dt>
-              <dd className="font-mono text-xs break-all">{selected.device_id}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Auth epoch</dt>
-              <dd>{selected.auth_epoch}</dd>
-            </div>
-          </dl>
-          {!selected.revoked && (
-            <button
-              type="button"
-              className="mt-4 rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-500"
-              onClick={() => setRevokeTarget(selected)}
-            >
-              Revoke device
-            </button>
-          )}
-        </aside>
-      )}
-      <ConfirmDialog
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={MonitorSmartphone}
+            title="No devices found"
+            description={
+              devices.length === 0
+                ? "Enroll a device with an invitation to see it here."
+                : "Try a different search or filter."
+            }
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)]/50 text-xs uppercase tracking-wide text-[var(--color-fg-subtle)]">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Name</th>
+                  <th className="px-4 py-3 font-medium">VPN IP</th>
+                  <th className="px-4 py-3 font-medium">Signaling</th>
+                  <th className="px-4 py-3 font-medium">Enrolled</th>
+                  <th className="hidden px-4 py-3 font-medium sm:table-cell">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {filtered.map((d) => (
+                  <tr
+                    key={d.device_id}
+                    className="cursor-pointer transition-colors hover:bg-[var(--color-surface-overlay)]/40"
+                    onClick={() => setSelected(d)}
+                  >
+                    <td className="px-4 py-3 font-medium">{d.name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-[var(--color-fg-muted)]">
+                      {d.vpn_ipv4 || "—"}
+                    </td>
+                    <td className="px-4 py-3">{signalingBadge(d)}</td>
+                    <td className="px-4 py-3 text-[var(--color-fg-muted)]">{formatEnrolled(d.enrolled_at)}</td>
+                    <td className="hidden px-4 py-3 sm:table-cell">
+                      {d.revoked ? <Badge tone="danger">Revoked</Badge> : <Badge tone="info">Active</Badge>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Drawer open={selected !== null} onClose={() => setSelected(null)} title={selected?.name ?? "Device"}>
+        {selected && (
+          <div className="space-y-4 text-sm">
+            <dl className="space-y-3">
+              <div>
+                <dt className="text-xs text-[var(--color-fg-subtle)]">Device ID</dt>
+                <dd className="mt-1 break-all font-mono text-xs">{selected.device_id}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--color-fg-subtle)]">VPN IPv4</dt>
+                <dd className="mt-1 font-mono">{selected.vpn_ipv4 || "Not assigned"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--color-fg-subtle)]">Signaling</dt>
+                <dd className="mt-1">{signalingBadge(selected)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--color-fg-subtle)]">Enrolled</dt>
+                <dd className="mt-1">{formatEnrolled(selected.enrolled_at)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--color-fg-subtle)]">Auth epoch</dt>
+                <dd className="mt-1 tabular-nums">{selected.auth_epoch}</dd>
+              </div>
+            </dl>
+            <p className="text-xs text-[var(--color-fg-subtle)]">
+              Signaling online means the device has an active WebSocket to the coordinator, not that a WireGuard tunnel is up.
+            </p>
+            {!selected.revoked && (
+              <Button variant="danger" className="w-full" onClick={() => setRevokeTarget(selected)}>
+                Revoke device
+              </Button>
+            )}
+          </div>
+        )}
+      </Drawer>
+
+      <Modal
         open={revokeTarget !== null}
+        onClose={() => !revokeBusy && setRevokeTarget(null)}
         title="Revoke device?"
-        description={`“${revokeTarget?.name ?? ""}” will lose access on next auth check. This cannot be undone.`}
-        confirmLabel="Revoke"
-        busy={revokeBusy}
-        onCancel={() => setRevokeTarget(null)}
-        onConfirm={() => void confirmRevoke()}
-      />
+        description={`“${revokeTarget?.name ?? ""}” will lose access on the next authentication check. This cannot be undone.`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRevokeTarget(null)} disabled={revokeBusy}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => void confirmRevoke()} disabled={revokeBusy}>
+              {revokeBusy ? "Revoking…" : "Revoke device"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-[var(--color-fg-muted)]">
+          WireGuard peers may remain until clients reconcile; revocation is enforced at enrollment and auth.
+        </p>
+      </Modal>
     </div>
   );
 }

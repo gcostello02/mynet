@@ -1,32 +1,44 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Plus, Ticket } from "lucide-react";
 import { ApiError, api, type Invitation } from "../api/client";
-import { StatusBadge } from "../components/StatusBadge";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Card } from "../components/ui/Card";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Modal } from "../components/ui/Modal";
+import { EmptyState } from "../components/ui/EmptyState";
+import { TableSkeleton } from "../components/ui/Skeleton";
+import { CopyButton } from "../components/ui/CopyButton";
+import { useToast } from "../hooks/useToast";
 
 export function InvitationsPage() {
+  const { push } = useToast();
   const [items, setItems] = useState<Invitation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [hours, setHours] = useState(24);
   const [maxUses, setMaxUses] = useState(1);
-  const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [tokenModalOpen, setTokenModalOpen] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       setItems(await api.invitations());
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load invitations");
     }
-  }
+  }, []);
 
   useEffect(() => {
     void load();
     return () => setCreatedToken(null);
-  }, []);
+  }, [load]);
 
-  async function onCreate(e: FormEvent) {
-    e.preventDefault();
+  async function onCreate() {
     setBusy(true);
     setCreatedToken(null);
     try {
@@ -36,133 +48,174 @@ export function InvitationsPage() {
         max_uses: Math.max(1, maxUses),
       });
       setCreatedToken(res.enrollment_token);
+      setTokenModalOpen(true);
+      setCreateOpen(false);
       setLabel("");
+      push("Invitation created.");
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Create failed");
+      push(err instanceof ApiError ? err.message : "Create failed", "error");
     } finally {
       setBusy(false);
     }
   }
 
   async function onRevoke(id: string) {
-    if (!confirm("Revoke this invitation?")) return;
+    if (!confirm("Revoke this invitation? Unused tokens will stop working.")) return;
     try {
       await api.deleteInvitation(id);
+      push("Invitation revoked.");
       await load();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Revoke failed");
+      push(e instanceof ApiError ? e.message : "Revoke failed", "error");
     }
   }
 
+  function invitationStatus(inv: Invitation) {
+    if (inv.revoked) return { label: "Revoked", tone: "danger" as const };
+    if (new Date(inv.expires_at) < new Date()) return { label: "Expired", tone: "neutral" as const };
+    if (inv.uses >= inv.max_uses) return { label: "Exhausted", tone: "warning" as const };
+    return { label: "Active", tone: "success" as const };
+  }
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Invitations</h1>
-        <p className="text-sm text-zinc-400">Enrollment tokens are shown once at creation.</p>
-      </div>
-      {error && <p className="text-red-300" role="alert">{error}</p>}
-      <form
-        onSubmit={onCreate}
-        className="grid gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 sm:grid-cols-4 light:border-zinc-200 light:bg-white"
+    <div>
+      <PageHeader
+        title="Invitations"
+        description="One-time enrollment tokens. Secrets are shown only immediately after creation."
+        action={
+          <Button variant="primary" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Create invitation
+          </Button>
+        }
+      />
+
+      {error && (
+        <p className="mb-4 rounded-[var(--radius-md)] border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300" role="alert">
+          {error}
+        </p>
+      )}
+
+      <Card padding={false}>
+        {!items ? (
+          <div className="p-4">
+            <TableSkeleton rows={4} />
+          </div>
+        ) : items.length === 0 ? (
+          <EmptyState
+            icon={Ticket}
+            title="No invitations"
+            description="Create an invitation to enroll a new device securely."
+            action={
+              <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                Create invitation
+              </Button>
+            }
+          />
+        ) : (
+          <ul className="divide-y divide-[var(--color-border)]">
+            {items.map((inv) => {
+              const st = invitationStatus(inv);
+              const remaining = Math.max(0, inv.max_uses - inv.uses);
+              return (
+                <li key={inv.id} className="flex flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-medium">{inv.label}</p>
+                    <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">
+                      {inv.uses} / {inv.max_uses} uses · {remaining} remaining · expires{" "}
+                      {new Date(inv.expires_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={st.tone}>{st.label}</Badge>
+                    {!inv.revoked && st.label === "Active" && (
+                      <Button variant="ghost" size="sm" onClick={() => void onRevoke(inv.id)}>
+                        Revoke
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
+
+      <Modal
+        open={createOpen}
+        onClose={() => !busy && setCreateOpen(false)}
+        title="Create invitation"
+        description="Configure label, lifetime, and how many devices may enroll."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setCreateOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void onCreate()} disabled={busy}>
+              {busy ? "Creating…" : "Create"}
+            </Button>
+          </>
+        }
       >
-        <label className="text-sm sm:col-span-2">
-          <span className="text-zinc-400">Label</span>
-          <input
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 light:border-zinc-300 light:bg-white"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-          />
-        </label>
-        <label className="text-sm">
-          <span className="text-zinc-400">Expires (hours)</span>
-          <input
-            type="number"
-            min={1}
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 light:border-zinc-300 light:bg-white"
-            value={hours}
-            onChange={(e) => setHours(Number(e.target.value))}
-          />
-        </label>
-        <label className="text-sm">
-          <span className="text-zinc-400">Max uses</span>
-          <input
-            type="number"
-            min={1}
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 light:border-zinc-300 light:bg-white"
-            value={maxUses}
-            onChange={(e) => setMaxUses(Number(e.target.value))}
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50 sm:col-span-4 sm:w-fit"
-        >
-          Create invitation
-        </button>
-      </form>
-      {createdToken && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
-          <p className="text-sm font-medium text-amber-100">Copy enrollment string now — it will not be shown again.</p>
-          <textarea
-            readOnly
-            className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 font-mono text-xs light:bg-white"
-            rows={4}
-            value={createdToken}
-            onFocus={(e) => e.target.select()}
-          />
-          <button
-            type="button"
-            className="mt-2 text-sm text-sky-400 hover:underline"
+        <div className="space-y-4">
+          <Input label="Label" placeholder="e.g. laptop" value={label} onChange={(e) => setLabel(e.target.value)} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Expires (hours)"
+              type="number"
+              min={1}
+              value={hours}
+              onChange={(e) => setHours(Number(e.target.value))}
+            />
+            <Input
+              label="Max uses"
+              type="number"
+              min={1}
+              value={maxUses}
+              onChange={(e) => setMaxUses(Number(e.target.value))}
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={tokenModalOpen && createdToken !== null}
+        onClose={() => {
+          setTokenModalOpen(false);
+          setCreatedToken(null);
+        }}
+        title="Enrollment string"
+        description="Copy this now. It cannot be retrieved again from the coordinator."
+        size="lg"
+        footer={
+          <Button
+            variant="primary"
             onClick={() => {
-              void navigator.clipboard.writeText(createdToken);
+              setTokenModalOpen(false);
+              setCreatedToken(null);
             }}
           >
-            Copy to clipboard
-          </button>
+            Done
+          </Button>
+        }
+      >
+        <div className="space-y-3">
+          <textarea
+            readOnly
+            className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 font-mono text-xs leading-relaxed"
+            rows={5}
+            value={createdToken ?? ""}
+            onFocus={(e) => e.target.select()}
+            aria-label="Enrollment token"
+          />
+          {createdToken && <CopyButton value={createdToken} label="Copy enrollment string" />}
+          <p className="text-xs text-[var(--color-fg-subtle)]">
+            Treat this like a password. Do not share in chat or email. Run{" "}
+            <code className="rounded bg-[var(--color-surface-overlay)] px-1">mynet join</code> on the device.
+          </p>
         </div>
-      )}
-      {!items ? (
-        <p className="text-zinc-500">Loading invitations…</p>
-      ) : items.length === 0 ? (
-        <p className="text-zinc-500">No invitations yet.</p>
-      ) : (
-        <ul className="space-y-2">
-          {items.map((inv) => {
-            const remaining = Math.max(0, inv.max_uses - inv.uses);
-            const expired = new Date(inv.expires_at) < new Date();
-            return (
-              <li
-                key={inv.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800 px-4 py-3 light:border-zinc-200"
-              >
-                <div>
-                  <p className="font-medium">{inv.label}</p>
-                  <p className="text-xs text-zinc-500">
-                    Uses {inv.uses}/{inv.max_uses} · {remaining} remaining · expires{" "}
-                    {new Date(inv.expires_at).toLocaleString()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {inv.revoked && <StatusBadge label="Revoked" tone="bad" />}
-                  {expired && !inv.revoked && <StatusBadge label="Expired" tone="muted" />}
-                  {!inv.revoked && !expired && <StatusBadge label="Active" tone="ok" />}
-                  {!inv.revoked && (
-                    <button
-                      type="button"
-                      className="text-sm text-red-400 hover:underline"
-                      onClick={() => void onRevoke(inv.id)}
-                    >
-                      Revoke
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      </Modal>
     </div>
   );
 }

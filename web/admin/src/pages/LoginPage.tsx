@@ -1,15 +1,22 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Network } from "lucide-react";
 import { ApiError } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
+import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
+import { Card } from "../components/ui/Card";
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, sessionExpired } = useAuth();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const expired = sessionExpired || params.get("expired") === "1";
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,7 +29,7 @@ export function LoginPage() {
       if (err instanceof ApiError) {
         setError(err.status === 401 ? "Invalid username or password." : err.message);
       } else {
-        setError("Could not reach coordinator.");
+        setError("Could not reach the coordinator. Check your connection and try again.");
       }
     } finally {
       setBusy(false);
@@ -30,47 +37,49 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4 light:bg-zinc-100">
-      <form
-        onSubmit={onSubmit}
-        className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-6 shadow-lg light:border-zinc-200 light:bg-white"
-      >
-        <h1 className="text-xl font-semibold">MyNet Admin</h1>
-        <p className="mt-1 text-sm text-zinc-400">Sign in with your coordinator administrator account.</p>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[var(--color-surface)] p-4">
+      <div className="mb-8 flex items-center gap-2 text-[var(--color-fg)]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-accent)]/15 text-[var(--color-accent)]">
+          <Network className="h-5 w-5" aria-hidden />
+        </div>
+        <span className="text-lg font-semibold tracking-tight">MyNet Admin</span>
+      </div>
+      <Card className="w-full max-w-[400px]">
+        <h1 className="text-lg font-semibold">Sign in</h1>
+        <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
+          Administrator access to your self-hosted coordinator.
+        </p>
+        {expired && (
+          <p className="mt-4 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" role="status">
+            Your session ended. Sign in again to continue.
+          </p>
+        )}
         {error && (
-          <p className="mt-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300" role="alert">
+          <p className="mt-4 rounded-[var(--radius-md)] border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300" role="alert">
             {error}
           </p>
         )}
-        <label className="mt-4 block text-sm">
-          <span className="text-zinc-400">Username</span>
-          <input
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 light:border-zinc-300 light:bg-white light:text-zinc-900"
+        <form onSubmit={onSubmit} className="mt-6 space-y-4">
+          <Input
+            label="Username"
             autoComplete="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
           />
-        </label>
-        <label className="mt-3 block text-sm">
-          <span className="text-zinc-400">Password</span>
-          <input
+          <Input
+            label="Password"
             type="password"
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 light:border-zinc-300 light:bg-white light:text-zinc-900"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
           />
-        </label>
-        <button
-          type="submit"
-          disabled={busy}
-          className="mt-5 w-full rounded-lg bg-sky-600 py-2 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
-        >
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
+          <Button variant="primary" className="w-full" disabled={busy} {...{ type: "submit" }}>
+            {busy ? "Signing in…" : "Sign in"}
+          </Button>
+        </form>
+      </Card>
     </div>
   );
 }

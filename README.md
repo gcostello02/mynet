@@ -53,7 +53,7 @@ make build-dashboard   # or: cd web/admin && npm ci && npm run build
 make build             # requires internal/dashboard/dist from the step above
 ```
 
-See [docs/v040-m3-dashboard.md](docs/v040-m3-dashboard.md). Local UI dev: `cd web/admin && npm run dev` (proxies API to `:8080`).
+See [docs/v040-m3-dashboard.md](docs/v040-m3-dashboard.md) and [docs/v040-m3-ui-design.md](docs/v040-m3-ui-design.md). Local UI dev: `cd web/admin && npm run dev` (proxies API to `:8080`).
 
 ## Quickstart (same machine / LAN lab)
 
