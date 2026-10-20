@@ -8,14 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ApiError, api } from "../api/client";
+import { ApiError, api, setUnauthorizedHandler } from "../api/client";
 
 type AuthState = {
   checked: boolean;
   authenticated: boolean;
   sessionExpired: boolean;
   expiresAt: string | null;
-  refresh: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 };
@@ -29,30 +28,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const hadSession = useRef(false);
 
+  // Any 401 after a session existed means it expired or the coordinator restarted.
   useEffect(() => {
-    if (authenticated) hadSession.current = true;
-  }, [authenticated]);
-
-  const refresh = useCallback(async () => {
-    try {
-      await api.status();
-      setAuthenticated(true);
-      setSessionExpired(false);
-    } catch (e) {
+    setUnauthorizedHandler(() => {
+      if (hadSession.current) setSessionExpired(true);
+      hadSession.current = false;
       setAuthenticated(false);
       setExpiresAt(null);
-      if (e instanceof ApiError && e.status === 401 && hadSession.current) {
-        setSessionExpired(true);
-        hadSession.current = false;
-      }
-    } finally {
-      setChecked(true);
-    }
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    api
+      .status()
+      .then(() => {
+        hadSession.current = true;
+        setAuthenticated(true);
+      })
+      .catch((e: unknown) => {
+        if (!(e instanceof ApiError)) setAuthenticated(false);
+      })
+      .finally(() => setChecked(true));
+  }, []);
 
   const login = useCallback(async (username: string, password: string) => {
     const res = await api.login(username, password);
@@ -67,26 +65,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.logout();
     } finally {
+      hadSession.current = false;
       setAuthenticated(false);
       setExpiresAt(null);
       setSessionExpired(false);
-      hadSession.current = false;
     }
   }, []);
 
   const value = useMemo(
-    () => ({
-      checked,
-      authenticated,
-      sessionExpired,
-      expiresAt,
-      refresh,
-      login,
-      logout,
-    }),
-    [checked, authenticated, sessionExpired, expiresAt, refresh, login, logout],
+    () => ({ checked, authenticated, sessionExpired, expiresAt, login, logout }),
+    [checked, authenticated, sessionExpired, expiresAt, login, logout],
   );
-
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

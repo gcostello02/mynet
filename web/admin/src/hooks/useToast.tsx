@@ -1,26 +1,25 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { AlertCircle, CheckCircle2, X } from "lucide-react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
-type Toast = { id: number; message: string; tone: "success" | "error" };
+type Tone = "success" | "error";
+type Toast = { id: number; message: string; tone: Tone };
 
-const ToastContext = createContext<{
-  push: (message: string, tone?: "success" | "error") => void;
-} | null>(null);
+const ToastContext = createContext<{ push: (message: string, tone?: Tone) => void } | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<Toast[]>([]);
+  const seq = useRef(0);
 
-  const push = useCallback((message: string, tone: "success" | "error" = "success") => {
-    const id = Date.now();
-    setItems((prev) => [...prev, { id, message, tone }]);
-    setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 4000);
-  }, []);
+  const dismiss = useCallback((id: number) => setItems((p) => p.filter((t) => t.id !== id)), []);
+
+  const push = useCallback(
+    (message: string, tone: Tone = "success") => {
+      const id = ++seq.current;
+      setItems((p) => [...p.slice(-3), { id, message, tone }]);
+      window.setTimeout(() => dismiss(id), tone === "error" ? 7000 : 4000);
+    },
+    [dismiss],
+  );
 
   const value = useMemo(() => ({ push }), [push]);
 
@@ -28,20 +27,30 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       <div
-        className="pointer-events-none fixed bottom-4 right-4 z-[100] flex max-w-sm flex-col gap-2"
+        className="pointer-events-none fixed inset-x-3 bottom-3 z-[100] flex flex-col items-stretch gap-2 sm:inset-x-auto sm:right-4 sm:bottom-4 sm:w-80"
         aria-live="polite"
+        aria-atomic="false"
       >
         {items.map((t) => (
           <div
             key={t.id}
-            role="status"
-            className={`pointer-events-auto rounded-[var(--radius-md)] border px-4 py-3 text-sm shadow-lg ${
-              t.tone === "error"
-                ? "border-red-500/30 bg-red-950/90 text-red-100"
-                : "border-[var(--color-border)] bg-[var(--color-surface-raised)] text-[var(--color-fg)]"
-            }`}
+            role={t.tone === "error" ? "alert" : "status"}
+            className="anim-pop pointer-events-auto flex items-start gap-2.5 rounded-lg border border-line-strong bg-raised px-3 py-2.5 text-[13px] shadow-pop"
           >
-            {t.message}
+            {t.tone === "error" ? (
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" aria-hidden />
+            ) : (
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" aria-hidden />
+            )}
+            <p className="flex-1 leading-snug text-fg">{t.message}</p>
+            <button
+              type="button"
+              aria-label="Dismiss notification"
+              onClick={() => dismiss(t.id)}
+              className="-mr-1 flex h-5 w-5 items-center justify-center rounded text-fg-subtle hover:bg-hover hover:text-fg"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         ))}
       </div>

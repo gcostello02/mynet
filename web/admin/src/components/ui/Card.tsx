@@ -1,24 +1,19 @@
 import type { ReactNode } from "react";
 
-export function Card({
+/** Flat bordered surface. */
+export function Panel({
   children,
   className = "",
-  padding = true,
 }: {
   children: ReactNode;
   className?: string;
-  padding?: boolean;
 }) {
   return (
-    <div
-      className={`rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] ${padding ? "p-4 sm:p-5" : ""} ${className}`}
-    >
-      {children}
-    </div>
+    <section className={`rounded-lg border border-line bg-panel ${className}`}>{children}</section>
   );
 }
 
-export function CardHeader({
+export function PanelHeader({
   title,
   description,
   action,
@@ -28,12 +23,10 @@ export function CardHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
-      <div>
-        <h2 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h2>
-        {description && (
-          <p className="mt-0.5 text-xs text-[var(--color-fg-subtle)]">{description}</p>
-        )}
+    <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+      <div className="min-w-0">
+        <h2 className="text-[13px] font-medium text-fg">{title}</h2>
+        {description && <p className="mt-0.5 text-xs text-fg-subtle">{description}</p>}
       </div>
       {action}
     </div>

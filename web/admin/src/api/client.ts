@@ -17,6 +17,13 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
+let unauthorizedHandler: (() => void) | null = null;
+
+/** AuthProvider registers this so any 401 on an authenticated call forces a clean re-login. */
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  unauthorizedHandler = fn;
+}
+
 export async function apiFetch<T>(
   path: string,
   init: RequestInit & { json?: unknown } = {},
@@ -38,6 +45,7 @@ export async function apiFetch<T>(
     body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
   });
   if (!res.ok) {
+    if (res.status === 401 && path !== "/v1/admin/login") unauthorizedHandler?.();
     throw new ApiError(res.status, await parseError(res));
   }
   if (res.status === 204) return undefined as T;

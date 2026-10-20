@@ -1,4 +1,7 @@
+import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { Logo } from "./components/brand/Logo";
+import { Skeleton } from "./components/ui/Skeleton";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ToastProvider } from "./hooks/useToast";
 import { AppShell } from "./layouts/AppShell";
@@ -7,17 +10,14 @@ import { InvitationsPage } from "./pages/InvitationsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { Skeleton } from "./components/ui/Skeleton";
 
-function RequireAuth({ children }: { children: React.ReactNode }) {
+function RequireAuth({ children }: { children: ReactNode }) {
   const { checked, authenticated, sessionExpired } = useAuth();
   if (!checked) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-8">
-        <div className="w-full max-w-xs space-y-3">
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+      <div className="flex min-h-screen flex-col items-center justify-center gap-6" role="status" aria-label="Checking session">
+        <Logo />
+        <Skeleton className="h-1 w-24" />
       </div>
     );
   }
@@ -29,8 +29,8 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
+    <ToastProvider>
+      <AuthProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -49,7 +49,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
-      </ToastProvider>
-    </AuthProvider>
+      </AuthProvider>
+    </ToastProvider>
   );
 }

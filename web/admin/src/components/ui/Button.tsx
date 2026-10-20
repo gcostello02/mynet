@@ -1,36 +1,51 @@
+import { Loader2 } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "danger" | "danger-soft";
+type Size = "sm" | "md" | "icon";
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] border-transparent",
+    "bg-accent-solid text-accent-solid-fg hover:bg-accent-solid-hover active:brightness-95 border-transparent",
   secondary:
-    "bg-[var(--color-surface-overlay)] text-[var(--color-fg)] border-[var(--color-border)] hover:bg-[var(--color-surface-raised)]",
-  ghost:
-    "bg-transparent text-[var(--color-fg-muted)] border-transparent hover:bg-[var(--color-surface-overlay)] hover:text-[var(--color-fg)]",
-  danger: "bg-red-600 text-white hover:bg-red-500 border-transparent",
+    "bg-raised text-fg border-line-strong hover:bg-hover hover:border-line-strong active:bg-line",
+  ghost: "bg-transparent text-fg-muted border-transparent hover:bg-hover hover:text-fg active:bg-line",
+  danger:
+    "bg-bad-solid text-white hover:bg-bad-solid-hover active:brightness-95 border-transparent",
+  "danger-soft":
+    "bg-bad-soft text-bad border-transparent hover:bg-bad-soft hover:brightness-110 active:brightness-95",
 };
 
-type Size = "sm" | "md";
+const sizes: Record<Size, string> = {
+  sm: "h-7 gap-1.5 px-2.5 text-xs",
+  md: "h-8 gap-2 px-3 text-[13px]",
+  icon: "h-7 w-7 justify-center text-xs",
+};
 
 export function Button({
   variant = "secondary",
   size = "md",
+  loading = false,
   className = "",
   children,
+  disabled,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant;
   size?: Size;
-  children: ReactNode;
+  loading?: boolean;
+  children?: ReactNode;
 }) {
-  const sz = size === "sm" ? "h-8 px-3 text-xs" : "h-9 px-4 text-sm";
   return (
     <button
       type="button"
-      className={`inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] border font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none ${sz} ${variants[variant]} ${className}`}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      className={`inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap rounded-md border font-medium transition-[background-color,border-color,color,filter] duration-100 disabled:pointer-events-none disabled:opacity-50 ${sizes[size]} ${variants[variant]} ${className}`}
       {...props}
-    />
+    >
+      {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+      {children}
+    </button>
   );
 }
