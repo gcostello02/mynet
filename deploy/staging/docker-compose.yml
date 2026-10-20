@@ -51,6 +51,25 @@ services:
     extra_hosts:
       - "staging-coord.mynet.test:10.200.0.11"
 
+  # One-off consumed-invitation replay (ephemeral state; no daemon).
+  invitation-replay:
+    profiles: ["tools"]
+    image: mynet-staging:latest
+    entrypoint: ["/bin/bash"]
+    command: ["-c", "exit 0"]
+    environment:
+      MYNET_STATE_DIR: /replay-state
+      MYNET_COORD_URL: https://staging-coord.mynet.test
+    tmpfs:
+      - /replay-state:rw,noexec,nosuid,mode=0700,size=32m
+    volumes:
+      - ./artifacts:/artifacts:ro
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
+    networks:
+      - staging
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+
   proxy:
     image: caddy:2-alpine
     depends_on:
