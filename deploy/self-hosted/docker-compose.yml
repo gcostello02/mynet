@@ -3,27 +3,32 @@ name: mynet-coordinator
 
 services:
   coordinator:
-    image: mynet-server:latest
+    image: mynet-coordinator:latest
     build:
       context: ../..
-      dockerfile: deploy/staging/Dockerfile
+      dockerfile: deploy/self-hosted/Dockerfile
     restart: unless-stopped
     env_file:
       - .env
     environment:
+      MYNET_SERVER_SECRET: ${MYNET_SERVER_SECRET:?Set MYNET_SERVER_SECRET in .env}
       MYNET_DATA_PATH: ${MYNET_DATA_PATH:-/data/coordinator.db}
       MYNET_LISTEN: ${MYNET_LISTEN:-:8080}
       MYNET_SECURE_COOKIES: ${MYNET_SECURE_COOKIES:-true}
+      MYNET_VPN_CIDR: ${MYNET_VPN_CIDR:-172.31.240.0/20}
+      MYNET_STUN_URLS: ${MYNET_STUN_URLS:-}
+      MYNET_TURN_URLS: ${MYNET_TURN_URLS:-}
+      MYNET_TURN_SECRET: ${MYNET_TURN_SECRET:-}
     volumes:
       - coordinator-data:/data
     ports:
-      # Bind to localhost only until setup completes; expose via reverse proxy for remote clients.
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${MYNET_HOST_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5
+      start_period: 15s
 
 volumes:
   coordinator-data:

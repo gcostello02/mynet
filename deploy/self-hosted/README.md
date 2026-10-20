@@ -1,48 +1,72 @@
 # Self-hosted coordinator (Docker Compose)
 
-This path is for operators who download MyNet and run their own coordinator. No MyNet cloud account is required.
+Run your own MyNet coordinator with the embedded admin UI. This stack uses **`deploy/self-hosted/Dockerfile`** (coordinator entrypoint only). It does **not** use the staging VPN client image entrypoint.
 
 ## Prerequisites
 
 - Docker Engine with Compose v2
-- A reverse proxy terminating **HTTPS** for the public coordinator URL (Caddy, nginx, Traefik, etc.)
-- UDP reachability for WireGuard and (optionally) STUN/TURN for ICE
+- HTTPS reverse proxy for the public coordinator URL (production clients require HTTPS)
+- Optional: STUN/TURN for ICE
 
 ## Quick start
 
-1. Copy `.env.example` to `.env` and set `MYNET_SERVER_SECRET` (`openssl rand -base64 32`).
-2. `docker compose up -d`
-3. Read the **bootstrap capability** printed in `docker compose logs coordinator` (one-time, expires in 2 hours).
-4. Open `http://127.0.0.1:8080/` on the host (or tunnel) and complete the setup wizard.
-5. Point your reverse proxy at `127.0.0.1:8080` only after you understand exposure risk; use HTTPS and restrict admin paths if needed.
+```bash
+cd deploy/self-hosted
+cp .env.example .env
+# Edit .env — set MYNET_SERVER_SECRET (openssl rand -base64 32)
+docker compose build
+docker compose up -d
+docker compose logs coordinator   # copy one-time bootstrap capability from stderr
+```
+
+Open **on the coordinator host**: `http://127.0.0.1:8080/` (default bind is localhost only).
+
+Complete the setup wizard. For remote setup, paste the bootstrap capability from the logs into the wizard.
+
+Optional CLI (loopback on the host):
+
+```bash
+mynet admin bootstrap --server http://127.0.0.1:8080
+```
+
+## Environment
+
+| Variable | Required | Notes |
+|----------|----------|--------|
+| `MYNET_SERVER_SECRET` | Yes | ≥ 32 bytes; `openssl rand -base64 32` |
+| `MYNET_DATA_PATH` | No | Default `/data/coordinator.db` in container |
+| `MYNET_SECURE_COOKIES` | No | `true` behind HTTPS |
+| `MYNET_HOST_PORT` | No | Host port (default `8080`), bound to `127.0.0.1` |
+| `MYNET_VPN_CIDR` | No | VPN pool for enrolled devices |
+| `MYNET_STUN_URLS` / `MYNET_TURN_*` | No | ICE helpers |
+
+**Not required:** `MYNET_CLIENT_NAME`, invitation artifacts, or any staging client variables.
 
 ## Persistent state
 
-The `coordinator-data` volume contains:
+Volume `coordinator-data` → `/data`:
 
-| Path | Purpose |
-|------|---------|
-| `coordinator.db` | SQLite (devices, invitations, admins, network meta) |
-| `coordinator.ed25519` | Coordinator private key (mode `0600`) |
+- `coordinator.db` — SQLite
+- `coordinator.ed25519` — coordinator private key (`0600`)
 
-**Back up both** before upgrades or migration. Restoring requires matching files from the same installation.
+Back up both before upgrades.
 
-## Bootstrap capability
+## Health & restarts
 
-- Issued when the database is uninitialized; rotated on each coordinator start until setup completes.
-- Shown on **stderr** at startup and via loopback `GET /v1/setup/bootstrap` or `mynet admin bootstrap --server http://127.0.0.1:8080`.
-- Required in header `X-Mynet-Bootstrap-Token` for remote `POST /v1/admin/setup` (non-loopback).
-- Never logged through structured logging; do not put it in URLs.
+- `GET /healthz` — liveness (used by Compose healthcheck)
+- `restart: unless-stopped` — container restarts on failure; fix config if it loops (e.g. missing `MYNET_SERVER_SECRET`)
+
+## Smoke test
+
+Isolated build/start check (own project name + volume; does not touch staging):
+
+```bash
+./scripts/smoke-test.sh
+```
 
 ## Upgrades
 
 1. Back up the volume.
-2. Pull/build the new image.
-3. `docker compose up -d` (same volume). Setup cannot run again once initialized.
+2. `docker compose build && docker compose up -d`
 
-## Health
-
-- `GET /healthz` — liveness
-- `GET /v1/setup/status` — `{ "initialized": true|false, ... }` (no secrets)
-
-See [docs/v040-m3-first-run-setup.md](../../docs/v040-m3-first-run-setup.md) for threat model and staging validation (no production changes).
+See [docs/v040-m3-first-run-setup.md](../../docs/v040-m3-first-run-setup.md) for bootstrap security and staging validation boundaries.

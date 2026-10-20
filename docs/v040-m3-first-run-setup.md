@@ -57,7 +57,7 @@ State: bootstrap secret and invitation token live **only in component memory** (
 
 ## Task 4 — Deployment UX
 
-- `deploy/self-hosted/docker-compose.yml` — single coordinator, persistent volume, localhost bind, healthcheck
+- `deploy/self-hosted/Dockerfile` + `docker-compose.yml` — coordinator-only image (not staging client entrypoint), persistent volume, localhost bind, healthcheck
 - `deploy/self-hosted/.env.example` — secrets, STUN/TURN, secure cookies
 - `deploy/self-hosted/README.md` — backup, upgrade, HTTPS expectations
 
