@@ -33,6 +33,7 @@ func (h *Handler) serveSPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -54,12 +55,13 @@ func (h *Handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	if ct := contentTypeFor(fpath); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
 
 func (h *Handler) setSecurityHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")

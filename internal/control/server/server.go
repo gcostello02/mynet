@@ -126,7 +126,7 @@ func New(cfg Config) (*Server, error) {
 
 	s.http = &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           s.limitBody(mux),
+		Handler:           s.limitBody(s.adminNoStoreMiddleware(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s, nil

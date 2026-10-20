@@ -22,6 +22,7 @@ export function InvitationsPage() {
 
   useEffect(() => {
     void load();
+    return () => setCreatedToken(null);
   }, []);
 
   async function onCreate(e: FormEvent) {

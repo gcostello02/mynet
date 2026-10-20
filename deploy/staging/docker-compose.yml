@@ -23,6 +23,7 @@ services:
       MYNET_STUN_URLS: stun:stun.l.google.com:19302
       MYNET_ENROLLMENT_SECRET: ${MYNET_ENROLLMENT_SECRET:-staging-enrollment-secret-not-for-prod}
       MYNET_LISTEN: ":8080"
+      MYNET_SECURE_COOKIES: "1"
     volumes:
       - coord-data:/data
     networks:

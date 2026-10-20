@@ -3,6 +3,7 @@ package control
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -82,14 +83,32 @@ type AdminLoginResponse struct {
 }
 
 func (c *APIClient) AdminLogin(username, password string) (AdminLoginResponse, error) {
-	var resp AdminLoginResponse
-	if err := c.postJSON("/v1/admin/login", AdminLoginRequest{Username: username, Password: password}, &resp, false); err != nil {
+	data, err := json.Marshal(AdminLoginRequest{Username: username, Password: password})
+	if err != nil {
 		return AdminLoginResponse{}, err
 	}
-	if resp.SessionToken != "" {
-		c.Token = resp.SessionToken
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/v1/admin/login", bytes.NewReader(data))
+	if err != nil {
+		return AdminLoginResponse{}, err
 	}
-	return resp, nil
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(AdminClientCLIHeader, AdminClientCLIValue)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return AdminLoginResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return AdminLoginResponse{}, decodeAPIError(resp)
+	}
+	var out AdminLoginResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return AdminLoginResponse{}, err
+	}
+	if out.SessionToken != "" {
+		c.Token = out.SessionToken
+	}
+	return out, nil
 }
 
 func (c *APIClient) AdminStatus() (map[string]any, error) {

@@ -117,32 +117,36 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	s.invalidateAdminSessionCookie(r)
 	sess, err := s.store.adminSessions.create(admin.ID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "session create failed")
 		return
 	}
 	s.setAdminSessionCookies(w, sess)
-	writeJSON(w, http.StatusOK, map[string]string{
-		"admin_id":       admin.ID,
-		"expires_at":     sess.ExpiresAt.Format(time.RFC3339),
-		"session_token":  sess.ID,
-	})
+	resp := map[string]string{
+		"admin_id":   admin.ID,
+		"expires_at": sess.ExpiresAt.Format(time.RFC3339),
+	}
+	if adminLoginIncludesSessionToken(r) {
+		resp["session_token"] = sess.ID
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.adminSessionFromRequest(r)
-	if ok {
-		s.store.adminSessions.delete(sess.ID)
+	sess, ok := s.adminRequire(w, r, true)
+	if !ok {
+		return
 	}
+	s.store.adminSessions.delete(sess.ID)
 	http.SetCookie(w, &http.Cookie{Name: adminCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.cfg.SecureCookies, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(w, &http.Cookie{Name: adminCSRFCookie, Value: "", Path: "/", MaxAge: -1, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAdmin(r, false); !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
+	if _, ok := s.adminRequire(w, r, false); !ok {
 		return
 	}
 	meta := s.store.Meta().Snapshot()
@@ -171,8 +175,7 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminListDevices(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAdmin(r, false); !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
+	if _, ok := s.adminRequire(w, r, false); !ok {
 		return
 	}
 	devs := s.store.ListAllDevices()
@@ -192,9 +195,8 @@ func (s *Server) handleAdminListDevices(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAdminPatchDevice(w http.ResponseWriter, r *http.Request) {
-	admin, ok := s.requireAdmin(r, true)
+	admin, ok := s.adminRequire(w, r, true)
 	if !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
 		return
 	}
 	_ = admin
@@ -222,8 +224,7 @@ func (s *Server) handleAdminPatchDevice(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAdminRevokeDevice(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAdmin(r, true); !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
+	if _, ok := s.adminRequire(w, r, true); !ok {
 		return
 	}
 	deviceID := r.PathValue("id")
@@ -236,8 +237,7 @@ func (s *Server) handleAdminRevokeDevice(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleAdminListInvitations(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAdmin(r, false); !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
+	if _, ok := s.adminRequire(w, r, false); !ok {
 		return
 	}
 	invites := s.store.ListInvitations()
@@ -263,9 +263,8 @@ type createInvitationRequest struct {
 }
 
 func (s *Server) handleAdminCreateInvitation(w http.ResponseWriter, r *http.Request) {
-	admin, ok := s.requireAdmin(r, true)
+	admin, ok := s.adminRequire(w, r, true)
 	if !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
 		return
 	}
 	var req createInvitationRequest
@@ -292,8 +291,7 @@ func (s *Server) handleAdminCreateInvitation(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleAdminRevokeInvitation(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAdmin(r, true); !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
+	if _, ok := s.adminRequire(w, r, true); !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -337,17 +335,6 @@ func (s *Server) adminSessionFromRequest(r *http.Request) (*AdminSession, bool) 
 	return sess, ok
 }
 
-func (s *Server) requireAdmin(r *http.Request, mutating bool) (*AdminSession, bool) {
-	sess, ok := s.adminSessionFromRequest(r)
-	if !ok {
-		return nil, false
-	}
-	if mutating && !s.adminCSRFValid(r, sess) {
-		return nil, false
-	}
-	return sess, true
-}
-
 func (s *Server) adminCSRFValid(r *http.Request, sess *AdminSession) bool {
 	if bearerToken(r) != "" {
 		return true
@@ -367,8 +354,7 @@ type legacyEnrollmentRequest struct {
 }
 
 func (s *Server) handleAdminLegacyEnrollment(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAdmin(r, true); !ok {
-		httpError(w, http.StatusUnauthorized, "admin authentication required")
+	if _, ok := s.adminRequire(w, r, true); !ok {
 		return
 	}
 	if s.store.sqlDB == nil {

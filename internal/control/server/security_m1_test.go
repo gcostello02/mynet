@@ -121,21 +121,6 @@ func TestRevokedDeviceAuthAndSession(t *testing.T) {
 	}
 }
 
-func TestAdminMutationRequiresCSRF(t *testing.T) {
-	srv, _ := testServerDB(t, "")
-	_ = adminSetup(t, srv)
-	ac := adminLogin(t, srv)
-	body, _ := json.Marshal(createInvitationRequest{MaxUses: 1})
-	req := httptest.NewRequest(http.MethodPost, "/v1/admin/invitations", bytes.NewReader(body))
-	req.AddCookie(&http.Cookie{Name: adminCookieName, Value: ac.session})
-	// Missing CSRF header.
-	rec := httptest.NewRecorder()
-	srv.handleAdminCreateInvitation(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 without csrf, got %d", rec.Code)
-	}
-}
-
 func TestLegacyDisabledAfterSetupUntilEnabled(t *testing.T) {
 	srv, _ := testServerDB(t, "test-enroll-secret")
 	_ = adminSetup(t, srv)

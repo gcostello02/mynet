@@ -4,7 +4,9 @@
 
 - Administrator and device traffic terminate TLS at your reverse proxy; the Go process listens on plain HTTP locally.
 - The dashboard is **same-origin** with `/v1/*`. Do not host the API and UI on different registrable domains without adding explicit CORS (not supported in M3).
-- Set `MYNET_SECURE_COOKIES=1` on `mynet-server` when users reach the coordinator over HTTPS so session cookies are `Secure`.
+- Set `MYNET_SECURE_COOKIES=1` on `mynet-server` when users reach the coordinator over HTTPS so session cookies are `Secure`. Staging compose sets this by default; production operators must set the same behind TLS.
+
+Browser login responses **omit** `session_token` in JSON; only the `mynet` CLI sends `X-Mynet-Admin-Client: cli` to receive a bearer token. Cookie-authenticated `POST`/`PATCH`/`DELETE`/`PUT` require `X-Mynet-CSRF` and a matching `Origin`/`Referer` host when those headers are present.
 
 ## Browser session
 
