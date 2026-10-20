@@ -115,7 +115,17 @@ type Runtime struct {
 
 // APIClient returns the coordination HTTP client (session token if logged in).
 func (r *Runtime) APIClient() *control.APIClient {
-	return r.api
+	r.mu.Lock()
+	api := r.api
+	r.mu.Unlock()
+	return api
+}
+
+// SetAPIClientForTest injects an API client (daemon package tests).
+func (r *Runtime) SetAPIClientForTest(api *control.APIClient) {
+	r.mu.Lock()
+	r.api = api
+	r.mu.Unlock()
 }
 
 func NewRuntime(stateDir string, log *slog.Logger) *Runtime {

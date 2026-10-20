@@ -13,6 +13,7 @@ const VPNReconcileInterval = 45 * time.Second
 
 func (n *Node) startVPNReconcile(ctx context.Context) {
 	go func() {
+		n.reconcileVPNPeers()
 		ticker := time.NewTicker(VPNReconcileInterval)
 		defer ticker.Stop()
 		for {
@@ -95,6 +96,7 @@ func (n *Node) reconcileVPNPeers() {
 		}
 	}
 
+	var added []control.VPNPeerConfig
 	for _, p := range want {
 		if _, ok := current[p.Name]; ok {
 			continue
@@ -112,8 +114,33 @@ func (n *Node) reconcileVPNPeers() {
 		n.mu.Lock()
 		n.vpnPeerKeys[p.Name] = p.WGPublicKey
 		n.mu.Unlock()
+		added = append(added, p)
+	}
+	if len(added) > 0 {
+		n.startPeerWorkersForVPNPeers(added)
+		if testHookVPNPeersAdded != nil {
+			testHookVPNPeersAdded(added)
+		}
 	}
 }
+
+func (n *Node) startPeerWorkersForVPNPeers(peers []control.VPNPeerConfig) {
+	if len(peers) == 0 {
+		return
+	}
+	n.mu.Lock()
+	ctx := n.peerWorkerCtx
+	rt := n.rt
+	selfID := n.selfDeviceID
+	n.mu.Unlock()
+	if ctx == nil || rt == nil || selfID == "" {
+		return
+	}
+	n.startPeerWorkers(ctx, rt, selfID, peers)
+}
+
+// testHookVPNPeersAdded is set by tests to observe reconcile-driven peer worker starts.
+var testHookVPNPeersAdded func(added []control.VPNPeerConfig)
 
 func isAuthAPIError(err error) bool {
 	if err == nil {

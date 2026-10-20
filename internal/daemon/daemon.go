@@ -48,6 +48,8 @@ type Node struct {
 	vpnPeerKeys     map[string]string // peer name -> wg public key hex
 	reconcileMu     sync.Mutex
 	peerCancel      context.CancelFunc
+	peerWorkerCtx   context.Context // parent ctx for per-peer ICE workers (cleared on Down)
+	selfDeviceID    string
 	peerWorkers     map[string]context.CancelFunc // per-peer VPN ICE worker
 	signalingCancel context.CancelFunc
 	netWatch        *NetWatcher
@@ -233,6 +235,8 @@ func (n *Node) Up(ctx context.Context) error {
 	n.peers = make(map[string]PeerStatus)
 	peerCtx, peerCancel := context.WithCancel(context.Background())
 	n.peerCancel = peerCancel
+	n.peerWorkerCtx = peerCtx
+	n.selfDeviceID = id.DeviceID
 	n.mu.Unlock()
 
 	n.startPeerWorkers(peerCtx, rt, id.DeviceID, vpnCfg.Peers)
@@ -299,6 +303,8 @@ func (n *Node) Down() error {
 	tunMgr := n.tunMgr
 	tunName := n.tunName
 	n.peerCancel = nil
+	n.peerWorkerCtx = nil
+	n.selfDeviceID = ""
 	n.running = false
 	n.engine = nil
 	n.bind = nil
