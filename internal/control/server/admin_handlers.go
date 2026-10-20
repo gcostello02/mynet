@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gcostello02/mynet/internal/invitation"
 	"github.com/gcostello02/mynet/internal/version"
 )
 
@@ -334,11 +335,24 @@ func (s *Server) handleAdminCreateInvitation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	meta := s.store.Meta().Snapshot()
+	compact, err := invitation.Compact(
+		meta.PublicServerURL,
+		s.store.NetworkID(),
+		meta.CoordinatorFingerprint,
+		meta.CoordinatorPublicKeyB64,
+		token,
+	)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "invitation encode failed")
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"id":                      id,
 		"enrollment_token":        token,
+		"invitation":              compact,
 		"coordinator_fingerprint": meta.CoordinatorFingerprint,
 		"public_server_url":       meta.PublicServerURL,
+		"network_id":              s.store.NetworkID(),
 	})
 }
 

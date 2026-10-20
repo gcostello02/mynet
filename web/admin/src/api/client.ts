@@ -150,9 +150,13 @@ export const api = {
   }) =>
     apiFetch<{
       id: string;
+      /** Raw enrollment token (internal); prefer `invitation` for `mynet join`. */
       enrollment_token: string;
+      /** Base64url(JSON) payload for `mynet join`. */
+      invitation: string;
       coordinator_fingerprint: string;
       public_server_url: string;
+      network_id: string;
     }>("/v1/admin/invitations", { method: "POST", json: body }),
   deleteInvitation: (id: string) =>
     apiFetch<void>(`/v1/admin/invitations/${encodeURIComponent(id)}`, {

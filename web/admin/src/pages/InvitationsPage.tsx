@@ -13,6 +13,7 @@ import { Modal } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import { RowsSkeleton } from "../components/ui/Skeleton";
 import { useToast } from "../hooks/useToast";
+import { joinCommand } from "../lib/invitation";
 import { formatDateTime, relativeTime } from "../lib/time";
 
 const EXPIRY: { label: string; seconds: number }[] = [
@@ -52,7 +53,7 @@ function Usage({ i }: { i: Invitation }) {
   );
 }
 
-type Created = { token: string; label: string };
+type Created = { invitation: string; label: string };
 
 export function InvitationsPage() {
   const { push } = useToast();
@@ -117,7 +118,12 @@ export function InvitationsPage() {
         max_uses: maxUses,
       });
       // Held in component state only — never written to storage, URLs, or logs.
-      setCreated({ token: res.enrollment_token, label: label.trim() });
+      const invitation = res.invitation?.trim();
+      if (!invitation) {
+        setCreateErr("Coordinator did not return a join invitation. Rebuild the coordinator image and try again.");
+        return;
+      }
+      setCreated({ invitation, label: label.trim() });
       setCreateOpen(false);
       void load();
     } catch (err) {
@@ -255,7 +261,7 @@ export function InvitationsPage() {
         open={createOpen}
         onClose={() => !creating && setCreateOpen(false)}
         title="Create invitation"
-        description="Generates a one-time enrollment secret. You’ll see it once, right after creating."
+        description="Generates a one-time join invitation for the MyNet CLI. You’ll see it once, right after creating."
       >
         <form onSubmit={onCreate} className="space-y-4">
           <Input
@@ -313,36 +319,48 @@ export function InvitationsPage() {
         footer={
           <div className="flex w-full flex-wrap items-center justify-between gap-2">
             <Button variant="ghost" onClick={() => setCreated(null)}>Close without copying</Button>
-            {created && <CopyButton variant="primary" size="md" value={created.token} label="Copy secret" />}
+            {created && (
+              <>
+                <CopyButton variant="primary" size="md" value={created.invitation} label="Copy invitation" />
+                <CopyButton size="md" value={joinCommand(created.invitation)} label="Copy join command" />
+              </>
+            )}
           </div>
         }
       >
         {created && (
           <div className="space-y-4">
             <div>
-              <div className="mb-1.5 text-xs font-medium text-fg-muted">Enrollment secret</div>
+              <div className="mb-1.5 text-xs font-medium text-fg-muted">Join invitation</div>
               <code
                 data-autofocus
                 tabIndex={0}
                 className="block max-h-32 overflow-y-auto break-all rounded-md border border-line-strong bg-canvas p-3 font-mono text-xs leading-5 text-fg"
               >
-                {created.token}
+                {created.invitation}
+              </code>
+            </div>
+            <div className="rounded-md border border-line bg-canvas px-3 py-2">
+              <div className="text-xs font-medium text-fg-muted">Example command</div>
+              <code className="mt-1 block break-all font-mono text-[11px] leading-5 text-fg-muted">
+                {joinCommand(created.invitation, "my-device")}
               </code>
             </div>
             <div className="flex gap-2.5 rounded-md border border-warn/30 bg-warn-soft px-3 py-2.5 text-[13px] leading-relaxed text-warn">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               <div>
-                <p className="font-medium">This is the only time you’ll see this secret.</p>
+                <p className="font-medium">This is the only time you’ll see this invitation.</p>
                 <p className="mt-1 text-warn/90">
-                  The coordinator stores only a hash, so it can’t be shown again. Anyone who has it can enroll a
-                  device, subject to this invitation’s expiry and use limit. Share it only with someone you trust.
-                  If it’s lost, revoke it and create a new one.
+                  It includes the coordinator URL, identity fingerprint, and one-time enrollment credential. The
+                  coordinator stores only a hash of the credential, so it can’t be shown again. Anyone with this
+                  string can enroll a device until it expires or is revoked. Share it only over a trusted channel.
                 </p>
               </div>
             </div>
             <p className="text-xs text-fg-muted">
-              On the new device, run <code className="rounded bg-raised px-1 py-0.5 font-mono">mynet join</code> and
-              paste the secret.
+              On the new device, run <strong className="font-medium text-fg">Copy join command</strong> or{" "}
+              <code className="rounded bg-raised px-1 py-0.5 font-mono">mynet join --name &lt;device&gt; '&lt;invitation&gt;'</code>.
+              Do not paste only the inner enrollment token.
             </p>
           </div>
         )}

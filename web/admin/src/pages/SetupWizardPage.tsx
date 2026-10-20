@@ -17,6 +17,7 @@ import { Input } from "../components/ui/Input";
 import { Panel, PanelHeader } from "../components/ui/Card";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
+import { joinCommand } from "../lib/invitation";
 import { shortFingerprint } from "../lib/time";
 
 type Step = "welcome" | "bootstrap" | "network" | "identity" | "invite" | "join";
@@ -44,7 +45,7 @@ export function SetupWizardPage({ onInitialized }: { onInitialized: () => void }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fingerprint, setFingerprint] = useState("");
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [inviteCompact, setInviteCompact] = useState<string | null>(null);
   const [inviteLabel, setInviteLabel] = useState("First device");
   const [enrolled, setEnrolled] = useState(false);
 
@@ -103,7 +104,12 @@ export function SetupWizardPage({ onInitialized }: { onInitialized: () => void }
         expires_in_seconds: 86400,
         max_uses: 1,
       });
-      setInviteToken(res.enrollment_token);
+      const invitation = res.invitation?.trim();
+      if (!invitation) {
+        setError("Coordinator did not return a join invitation. Rebuild the coordinator and try again.");
+        return;
+      }
+      setInviteCompact(invitation);
       setStep("join");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not create invitation.");
@@ -126,7 +132,7 @@ export function SetupWizardPage({ onInitialized }: { onInitialized: () => void }
     }
   }, [step, enrolled]);
 
-  const joinCmd = inviteToken ? `mynet join '${inviteToken}' --name my-device` : "";
+  const joinCmd = inviteCompact ? joinCommand(inviteCompact, "my-device") : "";
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -309,15 +315,18 @@ export function SetupWizardPage({ onInitialized }: { onInitialized: () => void }
           </Panel>
         )}
 
-        {step === "join" && inviteToken && (
+        {step === "join" && inviteCompact && (
           <div className="space-y-4">
             <Panel className="p-6">
-              <PanelHeader title="Enrollment secret" description="Copy before continuing. It is not saved in this browser." />
+              <PanelHeader
+                title="Join invitation"
+                description="Copy the full invitation or join command before continuing. It is not saved in this browser."
+              />
               <code className="block break-all rounded-md border border-line-strong bg-canvas p-3 font-mono text-xs leading-5">
-                {inviteToken}
+                {inviteCompact}
               </code>
               <div className="mt-3 flex flex-wrap gap-2">
-                <CopyButton value={inviteToken} label="Copy secret" variant="primary" />
+                <CopyButton value={inviteCompact} label="Copy invitation" variant="primary" />
                 <CopyButton value={joinCmd} label="Copy join command" />
               </div>
             </Panel>

@@ -94,6 +94,9 @@ func Parse(s string) (Invite, error) {
 	}
 	var inv Invite
 	if err := json.Unmarshal(raw, &inv); err != nil {
+		if !strings.HasPrefix(s, "{") {
+			return Invite{}, errors.New("invalid invitation: this looks like a raw enrollment token; use the full invitation from the dashboard (Copy invitation) or `mynet admin invitations create`")
+		}
 		return Invite{}, fmt.Errorf("invalid invitation JSON: %w", err)
 	}
 	if err := inv.Validate(); err != nil {

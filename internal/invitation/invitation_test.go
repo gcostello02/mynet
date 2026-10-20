@@ -2,6 +2,7 @@ package invitation
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,41 @@ func TestRejectHTTPByDefault(t *testing.T) {
 	}
 	if err := inv.Validate(); err == nil {
 		t.Fatal("expected https required")
+	}
+}
+
+func TestParseRejectsRawEnrollmentToken(t *testing.T) {
+	AllowHTTPForTest = true
+	inv := Invite{
+		Version:                Version,
+		ServerURL:              "https://coordinator.example",
+		NetworkID:              "default",
+		CoordinatorFingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		EnrollmentToken:        "secret-token",
+	}
+	compact, err := inv.EncodeCompact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(compact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Parse(parsed.EnrollmentToken)
+	if err == nil {
+		t.Fatal("expected error for raw token")
+	}
+	if !strings.Contains(err.Error(), "raw enrollment token") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Decoded compact without JSON shape should also fail clearly.
+	_, err = Parse(compact[:20])
+	if err == nil {
+		t.Fatal("expected error for truncated compact")
+	}
+	_, err = Parse(compact)
+	if err != nil {
+		t.Fatalf("full compact should parse: %v", err)
 	}
 }
 

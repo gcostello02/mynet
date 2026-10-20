@@ -223,24 +223,29 @@ func cmdAdmin(args []string) {
 			if err != nil {
 				fatal(err)
 			}
-			sess, _ := config.LoadAdminSession(sd)
-			inv := invitation.Invite{
-				Version:                invitation.Version,
-				ServerURL:              sess.ServerURL,
-				NetworkID:              "default",
-				CoordinatorFingerprint: resp["coordinator_fingerprint"],
-				CoordinatorPublicKey:   "",
-				EnrollmentToken:        resp["enrollment_token"],
-			}
-			if pubAPI, err := control.NewSecureAPIClient(sess.ServerURL); err == nil {
-				if pub, err := pubAPI.NetworkPublic(); err == nil {
-					inv.NetworkID = pub.NetworkID
-					inv.CoordinatorPublicKey = pub.CoordinatorPublicKey
+			compact := resp["invitation"]
+			if compact == "" {
+				sess, _ := config.LoadAdminSession(sd)
+				inv := invitation.Invite{
+					Version:                invitation.Version,
+					ServerURL:              sess.ServerURL,
+					NetworkID:              resp["network_id"],
+					CoordinatorFingerprint: resp["coordinator_fingerprint"],
+					EnrollmentToken:        resp["enrollment_token"],
 				}
-			}
-			compact, err := inv.EncodeCompact()
-			if err != nil {
-				fatal(err)
+				if inv.NetworkID == "" {
+					inv.NetworkID = "default"
+				}
+				if pubAPI, err := control.NewSecureAPIClient(sess.ServerURL); err == nil {
+					if pub, err := pubAPI.NetworkPublic(); err == nil {
+						inv.NetworkID = pub.NetworkID
+						inv.CoordinatorPublicKey = pub.CoordinatorPublicKey
+					}
+				}
+				compact, err = inv.EncodeCompact()
+				if err != nil {
+					fatal(err)
+				}
 			}
 			fmt.Println("Invitation created (treat as secret; deliver out-of-band):")
 			fmt.Println(compact)
