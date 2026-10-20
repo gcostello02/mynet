@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/gcostello02/mynet/internal/version"
 )
 
 type adminSetupRequest struct {
@@ -144,11 +146,27 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := s.store.Meta().Snapshot()
+	devs := s.store.ListAllDevices()
+	revoked := 0
+	online := 0
+	for _, d := range devs {
+		if d.Revoked {
+			revoked++
+			continue
+		}
+		if s.hub.IsOnline(d.DeviceID) {
+			online++
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"setup_complete":          meta.SetupComplete,
-		"device_count":            len(s.store.ListAllDevices()),
+		"device_count":            len(devs),
+		"active_device_count":     len(devs) - revoked,
+		"revoked_device_count":    revoked,
+		"signaling_online_count":  online,
 		"legacy_enrollment":       meta.LegacyEnrollmentEnabled,
 		"coordinator_fingerprint": meta.CoordinatorFingerprint,
+		"server_version":          version.Version,
 	})
 }
 

@@ -44,6 +44,17 @@ make build
 # binaries: bin/mynet, bin/mynet-server
 ```
 
+### Admin dashboard (V0.4 M3)
+
+The coordinator embeds a self-hosted React admin UI at `/` (API remains under `/v1/*`).
+
+```bash
+make build-dashboard   # or: cd web/admin && npm ci && npm run build
+make build             # requires internal/dashboard/dist from the step above
+```
+
+See [docs/v040-m3-dashboard.md](docs/v040-m3-dashboard.md). Local UI dev: `cd web/admin && npm run dev` (proxies API to `:8080`).
+
 ## Quickstart (same machine / LAN lab)
 
 **Terminal 1 — server**

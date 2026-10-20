@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/gcostello02/mynet/internal/control"
+	"github.com/gcostello02/mynet/internal/dashboard"
 	"github.com/gcostello02/mynet/internal/identity"
 )
 
@@ -118,6 +119,10 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /v1/ws", s.handleWebSocket)
 	mux.HandleFunc("POST /v1/vpn/register", s.withAuth(s.handleVPNRegister))
 	mux.HandleFunc("GET /v1/vpn/config", s.withAuth(s.handleVPNConfig))
+
+	if assets, err := dashboard.FS(); err == nil {
+		dashboard.NewHandler(assets).Mount(mux)
+	}
 
 	s.http = &http.Server{
 		Addr:              cfg.ListenAddr,
