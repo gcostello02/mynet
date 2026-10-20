@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,6 +51,8 @@ type Server struct {
 	enrollRL            *ipLimiter
 	loginRL             *ipLimiter
 	coordinatorIdentity *CoordinatorIdentity
+	bootstrap           bootstrapSlot
+	setupMu             sync.Mutex
 }
 
 func New(cfg Config) (*Server, error) {
@@ -101,6 +104,8 @@ func New(cfg Config) (*Server, error) {
 	mux.Handle("POST /v1/enroll", s.rateLimitMiddleware(s.enrollRL, http.HandlerFunc(s.handleEnroll)))
 	mux.HandleFunc("POST /v1/auth", s.handleAuth)
 	mux.HandleFunc("GET /v1/network/public", s.handleNetworkPublic)
+	mux.Handle("GET /v1/setup/status", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleSetupStatus)))
+	mux.Handle("GET /v1/setup/bootstrap", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleSetupBootstrap)))
 	mux.Handle("POST /v1/network/proof", s.rateLimitMiddleware(s.enrollRL, http.HandlerFunc(s.handleNetworkProof)))
 	mux.Handle("POST /v1/admin/setup", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminSetup)))
 	mux.Handle("POST /v1/admin/login", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminLogin)))
@@ -128,6 +133,9 @@ func New(cfg Config) (*Server, error) {
 		Addr:              cfg.ListenAddr,
 		Handler:           s.limitBody(s.adminNoStoreMiddleware(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := s.initBootstrapIfNeeded(); err != nil {
+		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	return s, nil
 }

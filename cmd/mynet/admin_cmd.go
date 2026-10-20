@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -51,6 +52,25 @@ func cmdAdmin(args []string) {
 			fatal(err)
 		}
 		fmt.Println("Admin session saved (separate from device credentials).")
+	case "bootstrap":
+		fs := flag.NewFlagSet("admin bootstrap", flag.ExitOnError)
+		server := fs.String("server", "http://127.0.0.1:8080", "coordinator URL (must be loopback on the host)")
+		_ = fs.Parse(args[1:])
+		resp, err := http.Get(strings.TrimRight(*server, "/") + "/v1/setup/bootstrap")
+		if err != nil {
+			fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			fatal(fmt.Errorf("bootstrap fetch failed: http %d", resp.StatusCode))
+		}
+		var out map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			fatal(err)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
 	case "logout":
 		if err := config.ClearAdminSession(sd); err != nil {
 			fatal(err)
@@ -186,6 +206,7 @@ func promptPassword(label string) string {
 func adminUsage() {
 	fmt.Println(`Admin commands (credentials in admin-session.json, not device session):
 
+  mynet admin bootstrap --server http://127.0.0.1:8080
   mynet admin login --server <https-url> [--user <name>]
   mynet admin logout
   mynet admin status

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -36,17 +37,10 @@ func (s *Server) handleNetworkPublic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	if !s.allowSetupRequest(r) {
 		httpError(w, http.StatusForbidden, "setup not allowed from this client")
-		return
-	}
-	meta := s.store.Meta().Snapshot()
-	if meta.SetupComplete || s.store.AdminCount() > 0 {
-		httpError(w, http.StatusForbidden, "setup already completed")
-		return
-	}
-	if deviceCount(s.store) > 0 {
-		httpError(w, http.StatusForbidden, "existing enrolled devices; use V0.3 legacy mode without admin setup")
 		return
 	}
 	var req adminSetupRequest
@@ -58,29 +52,48 @@ func (s *Server) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "username and password requirements not met")
 		return
 	}
+	if s.store.sqlDB == nil {
+		httpError(w, http.StatusBadRequest, "persistent data path required for setup")
+		return
+	}
+
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+
+	meta := s.store.Meta().Snapshot()
+	if meta.SetupComplete || s.store.AdminCount() > 0 {
+		httpError(w, http.StatusForbidden, "setup already completed")
+		return
+	}
+	if deviceCount(s.store) > 0 {
+		httpError(w, http.StatusForbidden, "existing enrolled devices; use V0.3 legacy mode without admin setup")
+		return
+	}
+
 	id, err := GenerateCoordinatorIdentity()
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "identity generation failed")
 		return
 	}
-	hash, err := hashAdminPassword(req.Password)
+	passHash, err := hashAdminPassword(req.Password)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "password hash failed")
 		return
 	}
-	if s.store.sqlDB == nil {
-		httpError(w, http.StatusBadRequest, "persistent data path required for setup")
-		return
-	}
-	admin, err := insertAdmin(s.store.sqlDB, req.Username, hash)
+	admin, err := firstAdminSetup(s.store.sqlDB, s.store.meta, req.Username, passHash, id, req.NetworkDisplayName, req.PublicServerURL, s.store.dbPath)
 	if err != nil {
+		if errors.Is(err, errSetupAlreadyDone) {
+			httpError(w, http.StatusForbidden, "setup already completed")
+			return
+		}
+		if err.Error() == "existing enrolled devices" {
+			httpError(w, http.StatusForbidden, "existing enrolled devices; use V0.3 legacy mode without admin setup")
+			return
+		}
 		httpError(w, http.StatusConflict, "admin create failed")
 		return
 	}
-	if err := completeSetup(s.store.sqlDB, s.store.meta, id, req.NetworkDisplayName, req.PublicServerURL, s.store.dbPath); err != nil {
-		httpError(w, http.StatusInternalServerError, "setup failed")
-		return
-	}
+	s.consumeBootstrapCapability()
 	s.store.admins[admin.ID] = admin
 	s.store.adminByUser[admin.Username] = admin.ID
 	s.coordinatorIdentity = id
@@ -88,17 +101,6 @@ func (s *Server) handleAdminSetup(w http.ResponseWriter, r *http.Request) {
 		"coordinator_fingerprint": id.Fingerprint,
 		"admin_id":                admin.ID,
 	})
-}
-
-func (s *Server) allowSetupRequest(r *http.Request) bool {
-	if isLoopback(r) {
-		return true
-	}
-	if s.cfg.SetupToken == "" {
-		return false
-	}
-	got := r.Header.Get(setupTokenHeader)
-	return got != "" && constantTimeStringEqual(got, s.cfg.SetupToken)
 }
 
 func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {

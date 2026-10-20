@@ -75,4 +75,4 @@ cd web/admin && npm run dev   # proxies /v1 to coordinator (see vite.config.ts)
 - [ ] Invitation delete/revoke in UI
 - [ ] Persist admin sessions across coordinator restart (schema exists, unused)
 - [ ] E2E browser tests in CI (Playwright) — optional follow-up
-- [ ] Setup wizard UI for first-run (`POST /v1/admin/setup`) — loopback/token only
+- [x] Setup wizard UI + one-time bootstrap capability (`GET /v1/setup/status`, `POST /v1/admin/setup`) — see [v040-m3-first-run-setup.md](v040-m3-first-run-setup.md)

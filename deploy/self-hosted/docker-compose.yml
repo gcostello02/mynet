@@ -1,0 +1,29 @@
+# Self-hosted MyNet coordinator (single-node). Terminate TLS at the reverse proxy.
+name: mynet-coordinator
+
+services:
+  coordinator:
+    image: mynet-server:latest
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MYNET_DATA_PATH: ${MYNET_DATA_PATH:-/data/coordinator.db}
+      MYNET_LISTEN: ${MYNET_LISTEN:-:8080}
+      MYNET_SECURE_COOKIES: ${MYNET_SECURE_COOKIES:-true}
+    volumes:
+      - coordinator-data:/data
+    ports:
+      # Bind to localhost only until setup completes; expose via reverse proxy for remote clients.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  coordinator-data:

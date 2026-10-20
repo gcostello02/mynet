@@ -76,6 +76,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	srv.WriteBootstrapConsole()
+
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && ctx.Err() == nil {
 			log.Error("listen failed", "err", err)

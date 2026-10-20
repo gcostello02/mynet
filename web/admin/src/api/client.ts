@@ -54,6 +54,13 @@ export async function apiFetch<T>(
   return JSON.parse(text) as T;
 }
 
+export type SetupStatus = {
+  initialized: boolean;
+  requires_bootstrap_proof?: boolean;
+  bootstrap_active?: boolean;
+  bootstrap_expires_at?: string;
+};
+
 export type NetworkPublic = {
   network_id: string;
   coordinator_public_key: string;
@@ -95,6 +102,21 @@ export type Invitation = {
 
 export const api = {
   health: () => fetch("/healthz", { credentials: "include" }),
+  setupStatus: () => apiFetch<SetupStatus>("/v1/setup/status"),
+  setup: (
+    body: {
+      username: string;
+      password: string;
+      network_display_name: string;
+      public_server_url: string;
+    },
+    bootstrapToken: string,
+  ) =>
+    apiFetch<{ coordinator_fingerprint: string; admin_id: string }>("/v1/admin/setup", {
+      method: "POST",
+      json: body,
+      headers: { "X-Mynet-Bootstrap-Token": bootstrapToken },
+    }),
   networkPublic: () => apiFetch<NetworkPublic>("/v1/network/public"),
   login: (username: string, password: string) =>
     apiFetch<{ admin_id: string; expires_at: string }>("/v1/admin/login", {
