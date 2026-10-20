@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [[ -z "${MYNET_SERVER_SECRET:-}" ]]; then
-  echo "mynet-coordinator: MYNET_SERVER_SECRET is required (at least 32 bytes). See deploy/self-hosted/.env.example" >&2
+  echo "mynet-coordinator: MYNET_SERVER_SECRET is required (at least 32 bytes). See deploy/coordinator/.env.example" >&2
   exit 1
 fi
 

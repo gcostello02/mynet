@@ -19,7 +19,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/mynet-server /usr/local/bin/mynet-server
-COPY deploy/self-hosted/entrypoint.sh /usr/local/bin/mynet-coordinator-entrypoint.sh
+COPY deploy/coordinator/entrypoint.sh /usr/local/bin/mynet-coordinator-entrypoint.sh
 RUN chmod +x /usr/local/bin/mynet-coordinator-entrypoint.sh
 VOLUME ["/data"]
 EXPOSE 8080

@@ -1,4 +1,5 @@
-# Self-hosted MyNet coordinator (single-node). Terminate TLS at the reverse proxy.
+# Deprecated path — use deploy/coordinator/docker-compose.yml
+# Kept for compatibility; identical coordinator service definition.
 name: mynet-coordinator
 
 services:
@@ -6,7 +7,7 @@ services:
     image: mynet-coordinator:latest
     build:
       context: ../..
-      dockerfile: deploy/self-hosted/Dockerfile
+      dockerfile: deploy/coordinator/Dockerfile
     restart: unless-stopped
     env_file:
       - .env

@@ -52,6 +52,52 @@ func cmdAdmin(args []string) {
 			fatal(err)
 		}
 		fmt.Println("Admin session saved (separate from device credentials).")
+	case "setup":
+		fs := flag.NewFlagSet("admin setup", flag.ExitOnError)
+		server := fs.String("server", "http://127.0.0.1:8080", "coordinator URL (loopback on host, or https with --bootstrap-token)")
+		user := fs.String("user", "admin", "first admin username")
+		network := fs.String("network", "MyNet", "network display name")
+		publicURL := fs.String("public-url", "", "HTTPS URL clients use (required)")
+		bootstrap := fs.String("bootstrap-token", "", "one-time token from mynet admin bootstrap (required for remote https)")
+		loginAfter := fs.Bool("login", true, "save admin session after setup (https public-url only)")
+		_ = fs.Parse(args[1:])
+		if *publicURL == "" {
+			fmt.Fprintln(os.Stderr, "--public-url is required (https://...)")
+			os.Exit(2)
+		}
+		pass := promptPassword("Admin password (min 12 chars): ")
+		resp, err := control.AdminSetup(*server, *bootstrap, control.AdminSetupRequest{
+			Username:           *user,
+			Password:           pass,
+			NetworkDisplayName: *network,
+			PublicServerURL:    *publicURL,
+		})
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("Coordinator initialized.\n  fingerprint: %s\n  admin_id: %s\n", resp.CoordinatorFingerprint, resp.AdminID)
+		if *loginAfter && strings.HasPrefix(strings.ToLower(*publicURL), "https://") {
+			api, err := control.NewSecureAPIClient(*publicURL)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "setup ok; admin login skipped:", err)
+				break
+			}
+			loginResp, err := api.AdminLogin(*user, pass)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "setup ok; admin login failed:", err)
+				break
+			}
+			if err := config.SaveAdminSession(sd, config.AdminSession{
+				ServerURL:    *publicURL,
+				SessionToken: loginResp.SessionToken,
+				ExpiresAt:    loginResp.ExpiresAt,
+			}); err != nil {
+				fatal(err)
+			}
+			fmt.Println("Admin session saved.")
+		} else if *loginAfter {
+			fmt.Println("Run: mynet admin login --server", *publicURL)
+		}
 	case "bootstrap":
 		fs := flag.NewFlagSet("admin bootstrap", flag.ExitOnError)
 		server := fs.String("server", "http://127.0.0.1:8080", "coordinator URL (must be loopback on the host)")
@@ -206,6 +252,7 @@ func promptPassword(label string) string {
 func adminUsage() {
 	fmt.Println(`Admin commands (credentials in admin-session.json, not device session):
 
+  mynet admin setup --public-url https://coordinator.example [--server http://127.0.0.1:8080]
   mynet admin bootstrap --server http://127.0.0.1:8080
   mynet admin login --server <https-url> [--user <name>]
   mynet admin logout

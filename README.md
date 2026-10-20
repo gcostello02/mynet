@@ -1,141 +1,154 @@
-# MyNet (V0.2)
+# MyNet
 
-MyNet is an open-source learning project inspired by Tailscale. **V0.1.x is not a VPN** — it proves authenticated peer discovery, ICE-based NAT traversal signaling, and **direct UDP application messaging** between devices without routing payloads through the coordination server. **V0.2** adds a **WireGuard mesh VPN** over the existing ICE transport, stable virtual IPs (`10.77.0.0/16`), TUN + per-peer `/32` routes, and a background daemon (`mynet up` / `mynet down`). V0.1.2 coordination over Cloudflare and independent mode are unchanged.
+MyNet is a **fully self-hosted** mesh VPN. You run your own **coordinator** on a Linux machine you control; there is no MyNet-operated cloud, account, or control plane. Edge devices (macOS or Linux) join your coordinator over HTTPS, then connect peer-to-peer using WireGuard over ICE.
 
-## Module path
+**Typical home layout**
 
-Go module: `github.com/gcostello02/mynet` (rename-friendly: update `go.mod` and imports when you pick a permanent Git host).
+| Machine | Runs |
+|---------|------|
+| Linux mini PC | Coordinator (Docker) + embedded web dashboard + Linux edge daemon |
+| MacBook | macOS edge daemon only |
+| Tailscale | Optional — use separately for admin SSH; MyNet does not modify it |
 
-## Current capabilities
+Module: `github.com/gcostello02/mynet`
 
-- Coordination server (`mynet-server`) with device enrollment, signed session auth, peer listing, and WebSocket ICE signaling
-- Client (`mynet`) with Ed25519 device identity, CLI, LAN + STUN candidate gathering (Pion ICE), and framed ping/test messages over the selected UDP path
-- Integration tests: local ICE pair, signaling server + two peers, auth/enrollment tests
+## What runs where
 
-## VPN (V0.2)
+**Coordinator (one per network)**
 
-```bash
-sudo mynet up      # TUN + WireGuard over ICE (starts mynetd if needed)
-mynet status
-sudo mynet down
-```
+- Signaling, enrollment, admin API, SQLite state, coordinator Ed25519 identity
+- Embedded admin UI at `/` (optional; setup works via CLI)
+- Deploy with Docker: [deploy/coordinator](deploy/coordinator/README.md)
 
-See [docs/vpn-setup.md](docs/vpn-setup.md) and [docs/wireguard-design.md](docs/wireguard-design.md).
+**Edge device**
 
-## Limitations
+- `mynet` CLI + background daemon (`mynet-daemon`)
+- Device identity in `~/.mynet/`
+- WireGuard TUN and per-peer routes when VPN is up (`mynet up`)
 
-- IPv4 only; per-peer `/32` routes (no default route takeover)
-- Externally reachable TURN not fully validated
-- TURN relay optional via server `GET /v1/ice-servers` + coturn ([docs/turn.md](docs/turn.md)); symmetric NAT may still fail without it
-- Single logical network per server instance; minimal revocation API (in-memory store)
-- Application payloads are **not** encrypted end-to-end (ICE checks authenticate the path, not app data)
-- Cross-ISP / hotspot P2P not verified in CI (manual testing required)
-
-## Prerequisites
-
-- Go 1.22+ (developed with Go 1.27)
-- Two devices for real-world tests (macOS + Linux supported)
-- **Does not** modify Tailscale, firewall, DNS, or routes — uses ordinary UDP sockets only
-
-## Build
+## 1. Install the coordinator (Linux)
 
 ```bash
-make build
-# binaries: bin/mynet, bin/mynet-server
+git clone https://github.com/gcostello02/mynet.git
+cd mynet/deploy/coordinator
+cp .env.example .env
+# MYNET_SERVER_SECRET=$(openssl rand -base64 32)  → paste into .env
+docker compose build && docker compose up -d
+curl -sf http://127.0.0.1:8080/healthz
 ```
 
-### Admin dashboard (V0.4 M3)
+Bind is **127.0.0.1:8080** by default. Terminate TLS with your own reverse proxy (nginx, Caddy, etc.) and your own hostname — no MyNet domain required.
 
-The coordinator embeds a self-hosted React admin UI at `/` (API remains under `/v1/*`).
+Full reference: [deploy/coordinator/README.md](deploy/coordinator/README.md)
+
+## 2. HTTPS and public URL
+
+Configure your proxy to forward `https://your-host/` → `http://127.0.0.1:8080`. Set `MYNET_SECURE_COOKIES=true` in `.env` when using HTTPS.
+
+Clients and invitations must use the **same HTTPS URL** you declare during setup (`--public-url`).
+
+## 3. Initialize the administrator (CLI)
+
+On the coordinator host:
 
 ```bash
-make build-dashboard   # or: cd web/admin && npm ci && npm run build
-make build             # requires internal/dashboard/dist from the step above
+# Build or install mynet on the host, or copy bin/mynet from the repo
+mynet admin setup \
+  --server http://127.0.0.1:8080 \
+  --user admin \
+  --network "My Network" \
+  --public-url https://your-host.example
 ```
 
-See [docs/v040-m3-dashboard.md](docs/v040-m3-dashboard.md) and [docs/v040-m3-ui-design.md](docs/v040-m3-ui-design.md). Local UI dev: `cd web/admin && npm run dev` (proxies API to `:8080`).
+Password: minimum 12 characters. The browser setup wizard at `/` is optional.
 
-## Quickstart (same machine / LAN lab)
+Remote setup: `mynet admin bootstrap --server http://127.0.0.1:8080` on the host, then `mynet admin setup --bootstrap-token '…' --server https://…`.
 
-**Terminal 1 — server**
+## 4. Open the dashboard
+
+Visit `https://your-host.example/` and sign in with the admin account. API routes remain under `/v1/*`.
+
+## 5. Create an invitation
 
 ```bash
-export MYNET_SERVER_SECRET="$(openssl rand -hex 32)"
-export MYNET_ENROLLMENT_SECRET="dev-enroll-secret"
-./bin/mynet-server --listen :8080
+mynet admin login --server https://your-host.example --user admin
+mynet admin invitations create --label laptop --max-uses 1
 ```
 
-**Terminal 2 — device A**
+Copy the one-time invitation string; treat it like a password.
+
+## 6. Join an edge device
+
+**Linux or macOS** (after checking existing state: `ls ~/.mynet`, `mynet service status`):
 
 ```bash
-./bin/mynet init --name macbook --server http://127.0.0.1:8080
-export MYNET_ENROLLMENT_SECRET="dev-enroll-secret"
-./bin/mynet login
-./bin/mynet peers
+mynet join '<invitation>' --name my-device
+sudo mynet service install
+sudo mynet service start
+mynet service status
+sudo mynet up
 ```
 
-**Terminal 3 — device B**
+Details: [docs/v040-m2-join.md](docs/v040-m2-join.md)
+
+## 7. Persistent edge service
+
+| Command | Purpose |
+|---------|---------|
+| `sudo mynet service install` | Write systemd (Linux) or launchd (macOS) unit |
+| `sudo mynet service start` | Start supervised daemon |
+| `sudo mynet service stop` | Stop daemon |
+| `mynet service status` | Health and VPN summary |
+| `sudo mynet service upgrade --candidate ./bin/mynet` | Replace supervised binary |
+
+Do not run `service install` blindly if another MyNet install already owns `mynet-daemon` — inspect first.
+
+## Backup coordinator state
 
 ```bash
-./bin/mynet init --name minipc --server http://127.0.0.1:8080
-export MYNET_ENROLLMENT_SECRET="dev-enroll-secret"
-./bin/mynet login
+cd deploy/coordinator
+docker compose exec coordinator tar -czf - -C /data . > backup.tar.gz
 ```
 
-**Connect (A initiates)**
+Back up `coordinator.db` and `coordinator.ed25519` together.
+
+## Mini PC migration (V0.3 → V0.4)
+
+If you previously ran native `mynet-server` on `:8787` with `devices.db`, read [deploy/coordinator/minipc.md](deploy/coordinator/minipc.md) for inspection commands, backups, port/tunnel changes, and re-enrollment.
+
+## Troubleshooting
+
+| Issue | What to check |
+|-------|----------------|
+| `/healthz` fails | `docker compose logs coordinator`, `MYNET_SERVER_SECRET` in `.env` |
+| Setup forbidden | Use loopback on host, or bootstrap token for remote HTTPS |
+| Join fails | HTTPS URL, invitation expiry, clock skew |
+| VPN no connectivity | `mynet diagnose`, STUN/TURN in coordinator `.env`, firewall UDP |
+| Admin locked out | Restore DB backup; no cloud recovery |
+
+More: [docs/m1-coordinator-admin.md](docs/m1-coordinator-admin.md), [docs/v040-m3-first-run-setup.md](docs/v040-m3-first-run-setup.md)
+
+## Build from source
 
 ```bash
-# on macbook
-./bin/mynet connect --peer minipc
-./bin/mynet ping --peer minipc
-./bin/mynet status
+make build-dashboard   # embed admin UI
+make build             # bin/mynet, bin/mynet-server
 ```
 
-On `minipc`, run `mynet login` first so signaling is online; when `macbook` connects, `minipc` handles the incoming ICE session automatically.
+Go 1.22+ (toolchain may auto-download). VPN: IPv4, per-peer `/32` routes — see [docs/vpn-setup.md](docs/vpn-setup.md).
 
-### Cloudflare Tunnel + mini PC
+## Developer / staging
 
-1. Run `mynet-server` on the mini PC (e.g. `:8787`) with `MYNET_DATA_PATH` for persistence.
-2. Point a Cloudflare published route at `http://127.0.0.1:8787` (e.g. `https://mesh.example.com`).
-3. On **both** peers: `mynet config independent --server https://mesh.example.com` then `mynet login`.
-4. On the mini PC (server + peer): `mynet login --stay` in one terminal.
-5. From the remote peer: `mynet connect --peer minipc` then `mynet ping --peer minipc`.
+Multi-container acceptance and CI images: [deploy/staging](deploy/staging/) and [docs/m040-m2-staging.md](docs/m040-m2-staging.md). Not required for production coordinator install.
 
-Verify `curl https://mesh.example.com/healthz` returns `ok`. TURN must use a **public** `turn:IP:3478` or DNS name with UDP forwarded — not the Cloudflare HTTP hostname and not a `100.x` Tailscale address if clients are off-tailnet.
+`deploy/self-hosted/` is a compatibility alias for `deploy/coordinator/`.
 
-ICE servers are configurable in `~/.mynet/config.json` (`stun_urls`, `turn_urls`, or combined `ice_urls`). Default STUN: `stun:stun.l.google.com:19302`. For development over Tailscale while off-LAN, see [docs/tailscale.md](docs/tailscale.md).
+## Documentation index
 
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `mynet init --name <name>` | Create device identity under `~/.mynet/` |
-| `mynet login` | Enroll (first time) + authenticate + open signaling WebSocket |
-| `mynet peers` | List authorized peers and online status |
-| `mynet connect --peer <name> [--relay-only]` | Start ICE signaling with peer (initiator) |
-| `mynet diagnose [--peer <name>]` | Signaling, ICE, and path diagnostics |
-| `mynet ping --peer <name>` | RTT over direct UDP app channel |
-| `mynet status` | Device / peer / path diagnostics |
-| `mynet config show \| tailnet \| independent \| set-server` | Server URL and connectivity mode |
-| `mynet down` | Close signaling and peer UDP (no system VPN teardown) |
-
-## Verifying the data path
-
-- The coordination server relays **signaling only** (ICE ufrag/pwd + candidates), not application frames.
-- After connect, `mynet status` reports nominated candidate types (e.g. `host` vs `server-reflexive (STUN)`) and local/remote socket addresses from the ICE connection.
-- Candidate types indicate what was **selected**, not a cryptographic proof; confirm with LAN addresses on the same subnet, or STUN reflexive addresses when crossing NAT. Compare with packet capture if needed (see `docs/testing.md`).
-
-## Documentation
-
-- [docs/architecture.md](docs/architecture.md)
-- [docs/protocol.md](docs/protocol.md)
+- [docs/v040-architecture.md](docs/v040-architecture.md) — V0.4 design
+- [docs/v040-security-model.md](docs/v040-security-model.md)
+- [docs/v040-m3-dashboard.md](docs/v040-m3-dashboard.md) — admin UI
 - [docs/testing.md](docs/testing.md)
-- [docs/tailscale.md](docs/tailscale.md)
-- [docs/turn.md](docs/turn.md)
-- [docs/deployment-options.md](docs/deployment-options.md)
-- [docs/independent-connectivity.md](docs/independent-connectivity.md)
-- [docs/turn-testing.md](docs/turn-testing.md)
-- [docs/audit-v0.1.1.md](docs/audit-v0.1.1.md)
 
 ## License
 

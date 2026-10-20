@@ -8,9 +8,13 @@ HOST_PORT="${MYNET_SMOKE_PORT:-$((18080 + ($(date +%s) % 2000)))}"
 ENV_FILE="$(mktemp)"
 BASE="http://127.0.0.1:${HOST_PORT}"
 
+COMPOSE_ENV="${ROOT}/.env"
 cleanup() {
   docker compose -f "${ROOT}/docker-compose.yml" -p "$PROJECT" down -v --remove-orphans 2>/dev/null || true
   rm -f "$ENV_FILE"
+  if [[ -f "$COMPOSE_ENV" && "${COMPOSE_ENV_CREATED:-}" == 1 ]]; then
+    rm -f "$COMPOSE_ENV"
+  fi
 }
 trap cleanup EXIT
 
@@ -25,6 +29,11 @@ MYNET_SERVER_SECRET=${SECRET}
 MYNET_SECURE_COOKIES=false
 MYNET_HOST_PORT=${HOST_PORT}
 EOF
+
+if [[ ! -f "$COMPOSE_ENV" ]]; then
+  cp "$ENV_FILE" "$COMPOSE_ENV"
+  COMPOSE_ENV_CREATED=1
+fi
 
 echo "smoke-test: project=${PROJECT} port=${HOST_PORT}"
 docker compose -f "${ROOT}/docker-compose.yml" -p "$PROJECT" --env-file "$ENV_FILE" build --quiet

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gcostello02/mynet/internal/identity"
@@ -146,6 +147,53 @@ func (c *APIClient) AdminListInvitations() ([]map[string]any, error) {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// AdminSetupRequest is the body for POST /v1/admin/setup (first-run only).
+type AdminSetupRequest struct {
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	NetworkDisplayName string `json:"network_display_name"`
+	PublicServerURL    string `json:"public_server_url"`
+}
+
+// AdminSetupResponse is returned after successful first-run setup.
+type AdminSetupResponse struct {
+	CoordinatorFingerprint string `json:"coordinator_fingerprint"`
+	AdminID                string `json:"admin_id"`
+}
+
+const bootstrapTokenHeader = "X-Mynet-Bootstrap-Token"
+
+// AdminSetup initializes the coordinator (loopback, bootstrap token, or legacy setup token).
+// baseURL may be http://127.0.0.1:8080 on the coordinator host.
+func AdminSetup(baseURL, bootstrapToken string, req AdminSetupRequest) (AdminSetupResponse, error) {
+	u := strings.TrimRight(baseURL, "/")
+	data, err := json.Marshal(req)
+	if err != nil {
+		return AdminSetupResponse{}, err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, u+"/v1/admin/setup", bytes.NewReader(data))
+	if err != nil {
+		return AdminSetupResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if bootstrapToken != "" {
+		httpReq.Header.Set(bootstrapTokenHeader, bootstrapToken)
+	}
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return AdminSetupResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return AdminSetupResponse{}, decodeAPIError(resp)
+	}
+	var out AdminSetupResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return AdminSetupResponse{}, err
+	}
+	return out, nil
 }
 
 func (c *APIClient) AdminRevokeDevice(deviceID string) error {

@@ -57,9 +57,9 @@ State: bootstrap secret and invitation token live **only in component memory** (
 
 ## Task 4 — Deployment UX
 
-- `deploy/self-hosted/Dockerfile` + `docker-compose.yml` — coordinator-only image (not staging client entrypoint), persistent volume, localhost bind, healthcheck
-- `deploy/self-hosted/.env.example` — secrets, STUN/TURN, secure cookies
-- `deploy/self-hosted/README.md` — backup, upgrade, HTTPS expectations
+- `deploy/coordinator/Dockerfile` + `docker-compose.yml` — coordinator-only image (not staging client entrypoint), persistent volume, localhost bind, healthcheck
+- `deploy/coordinator/.env.example` — secrets, STUN/TURN, secure cookies
+- `deploy/coordinator/README.md` — backup, upgrade, HTTPS expectations (`deploy/self-hosted/` is a compatibility alias)
 
 Admin is not intentionally exposed on `0.0.0.0` in the example compose file; operators front with HTTPS reverse proxy.
 
@@ -84,7 +84,7 @@ Existing M1/M3 browser security and admin flow tests still apply.
 On a **disposable** machine (not production/staging mesh):
 
 ```bash
-cd deploy/self-hosted
+cd deploy/coordinator
 cp .env.example .env   # set MYNET_SERVER_SECRET
 docker compose build && docker compose up -d
 docker compose logs coordinator | head -30   # copy bootstrap capability
