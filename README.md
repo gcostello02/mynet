@@ -72,6 +72,7 @@ Visit `https://your-host.example/` and sign in with the admin account. API route
 
 ```bash
 mynet admin login --server https://your-host.example --user admin
+mynet admin password change   # prompts securely; invalidates all admin sessions
 mynet admin invitations create --label laptop --max-uses 1
 ```
 

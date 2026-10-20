@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch } from "./client";
+import { ApiError, apiFetch, setUnauthorizedHandler } from "./client";
 
 describe("apiFetch", () => {
   afterEach(() => {
@@ -18,6 +18,24 @@ describe("apiFetch", () => {
     await apiFetch("/v1/admin/logout", { method: "POST" });
     const headers = fetchMock.mock.calls[0][1].headers as Headers;
     expect(headers.get("X-Mynet-CSRF")).toBe("tok");
+  });
+
+  it("does not treat wrong current password on change as global session expiry", async () => {
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({ error: "invalid current password" }),
+      }),
+    );
+    await expect(
+      apiFetch("/v1/admin/password", { method: "POST", json: { current_password: "x", new_password: "y" } }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    setUnauthorizedHandler(null);
   });
 
   it("throws ApiError with status", async () => {

@@ -24,6 +24,7 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   const expired = sessionExpired || params.get("expired") === "1";
+  const passwordChanged = params.get("password_changed") === "1";
 
   if (checked && authenticated) return <Navigate to="/" replace />;
 
@@ -89,7 +90,12 @@ export function LoginPage() {
           <h1 className="text-xl font-semibold tracking-tight">Sign in</h1>
           <p className="mt-1.5 text-[13px] text-fg-muted">Use your coordinator administrator account.</p>
 
-          {expired && !error && (
+          {passwordChanged && !error && (
+            <p role="status" className="mt-5 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-[13px] text-ok">
+              Password updated. Sign in with your new password.
+            </p>
+          )}
+          {expired && !passwordChanged && !error && (
             <p role="status" className="mt-5 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-[13px] text-warn">
               Your session ended — it expired or the coordinator restarted. Sign in again to continue.
             </p>

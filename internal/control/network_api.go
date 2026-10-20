@@ -196,6 +196,14 @@ func AdminSetup(baseURL, bootstrapToken string, req AdminSetupRequest) (AdminSet
 	return out, nil
 }
 
+func (c *APIClient) AdminChangePassword(currentPassword, newPassword string) error {
+	body := map[string]string{
+		"current_password": currentPassword,
+		"new_password":     newPassword,
+	}
+	return c.postJSON("/v1/admin/password", body, nil, true)
+}
+
 func (c *APIClient) AdminRevokeDevice(deviceID string) error {
 	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/v1/admin/devices/"+deviceID+"/revoke", bytes.NewReader([]byte("{}")))
 	if err != nil {

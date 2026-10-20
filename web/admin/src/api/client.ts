@@ -45,7 +45,13 @@ export async function apiFetch<T>(
     body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
   });
   if (!res.ok) {
-    if (res.status === 401 && path !== "/v1/admin/login") unauthorizedHandler?.();
+    if (
+      res.status === 401 &&
+      path !== "/v1/admin/login" &&
+      path !== "/v1/admin/password"
+    ) {
+      unauthorizedHandler?.();
+    }
     throw new ApiError(res.status, await parseError(res));
   }
   if (res.status === 204) return undefined as T;
@@ -124,6 +130,11 @@ export const api = {
       json: { username, password },
     }),
   logout: () => apiFetch<void>("/v1/admin/logout", { method: "POST" }),
+  changePassword: (current_password: string, new_password: string) =>
+    apiFetch<void>("/v1/admin/password", {
+      method: "POST",
+      json: { current_password, new_password },
+    }),
   status: () => apiFetch<AdminStatus>("/v1/admin/status"),
   devices: () => apiFetch<Device[]>("/v1/admin/devices"),
   revokeDevice: (id: string) =>

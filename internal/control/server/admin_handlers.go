@@ -136,6 +136,56 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+type adminPasswordChangeRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+func (s *Server) handleAdminPasswordChange(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.adminRequire(w, r, true)
+	if !ok {
+		return
+	}
+	var req adminPasswordChangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if len(req.NewPassword) < 12 {
+		httpError(w, http.StatusBadRequest, "password requirements not met")
+		return
+	}
+	admin := s.store.admins[sess.AdminID]
+	if admin == nil {
+		httpError(w, http.StatusUnauthorized, "admin authentication required")
+		return
+	}
+	if !verifyAdminPassword(req.CurrentPassword, admin.PasswordHash) {
+		httpError(w, http.StatusForbidden, "invalid current password")
+		return
+	}
+	newHash, err := hashAdminPassword(req.NewPassword)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "password hash failed")
+		return
+	}
+	if s.store.sqlDB != nil {
+		if err := updateAdminPasswordHash(s.store.sqlDB, admin.ID, newHash); err != nil {
+			httpError(w, http.StatusInternalServerError, "password update failed")
+			return
+		}
+	}
+	admin.PasswordHash = newHash
+	s.store.adminSessions.deleteAll()
+	s.clearAdminSessionCookies(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) clearAdminSessionCookies(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: adminCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.cfg.SecureCookies, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: adminCSRFCookie, Value: "", Path: "/", MaxAge: -1, Secure: s.cfg.SecureCookies, SameSite: http.SameSiteStrictMode})
+}
+
 func (s *Server) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.adminRequire(w, r, true)
 	if !ok {

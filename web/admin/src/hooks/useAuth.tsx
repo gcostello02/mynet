@@ -17,6 +17,8 @@ type AuthState = {
   expiresAt: string | null;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Local session cleared after server invalidated cookies (e.g. password change). */
+  endSession: () => void;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -61,6 +63,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setChecked(true);
   }, []);
 
+  const endSession = useCallback(() => {
+    hadSession.current = false;
+    setAuthenticated(false);
+    setExpiresAt(null);
+    setSessionExpired(true);
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await api.logout();
@@ -73,8 +82,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ checked, authenticated, sessionExpired, expiresAt, login, logout }),
-    [checked, authenticated, sessionExpired, expiresAt, login, logout],
+    () => ({ checked, authenticated, sessionExpired, expiresAt, login, logout, endSession }),
+    [checked, authenticated, sessionExpired, expiresAt, login, logout, endSession],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

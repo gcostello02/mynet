@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -170,6 +169,32 @@ func cmdAdmin(args []string) {
 			adminUsage()
 			os.Exit(2)
 		}
+	case "password":
+		if len(args) < 2 || args[1] != "change" {
+			fmt.Fprintln(os.Stderr, "usage: mynet admin password change")
+			os.Exit(2)
+		}
+		api, err := loadAdminAPI(sd)
+		if err != nil {
+			fatal(err)
+		}
+		current := promptPassword("Current password: ")
+		newPass := promptPassword("New password (min 12 chars): ")
+		confirm := promptPassword("Confirm new password: ")
+		if newPass != confirm {
+			fatal(fmt.Errorf("new passwords do not match"))
+		}
+		if len(newPass) < 12 {
+			fatal(fmt.Errorf("new password must be at least 12 characters"))
+		}
+		if err := api.AdminChangePassword(current, newPass); err != nil {
+			fatal(err)
+		}
+		if err := config.ClearAdminSession(sd); err != nil {
+			fatal(err)
+		}
+		fmt.Println("Password changed. All admin sessions were invalidated.")
+		fmt.Println("Run: mynet admin login --server <https-url>")
 	case "invitations":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: mynet admin invitations create")
@@ -242,13 +267,6 @@ func loadAdminAPI(stateDir string) (*control.APIClient, error) {
 	return api, nil
 }
 
-func promptPassword(label string) string {
-	fmt.Fprint(os.Stderr, label)
-	r := bufio.NewReader(os.Stdin)
-	b, _ := r.ReadString('\n')
-	return strings.TrimSpace(b)
-}
-
 func adminUsage() {
 	fmt.Println(`Admin commands (credentials in admin-session.json, not device session):
 
@@ -260,5 +278,6 @@ func adminUsage() {
   mynet admin devices list [--format json]
   mynet admin devices revoke <device_id>
   mynet admin invitations list
-  mynet admin invitations create [--label <name>] [--expires 86400] [--max-uses 1]`)
+  mynet admin invitations create [--label <name>] [--expires 86400] [--max-uses 1]
+  mynet admin password change`)
 }

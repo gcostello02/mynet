@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
+import { ChangePasswordForm } from "../components/ChangePasswordForm";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Panel, PanelHeader } from "../components/ui/Card";
@@ -29,7 +31,8 @@ function ReadOnly({ children }: { children: ReactNode }) {
 
 export function SettingsPage() {
   const { network, status, loaded } = useNetwork();
-  const { logout, expiresAt } = useAuth();
+  const navigate = useNavigate();
+  const { logout, expiresAt, endSession } = useAuth();
   const { pref, setPref } = useTheme();
 
   return (
@@ -119,6 +122,14 @@ export function SettingsPage() {
                   { value: "light", label: "Light" },
                   { value: "system", label: "System" },
                 ]}
+              />
+            </Row>
+            <Row label="Password" note="Signing out all admin sessions after a successful change.">
+              <ChangePasswordForm
+                onPasswordChanged={() => {
+                  endSession();
+                  navigate("/login?password_changed=1", { replace: true });
+                }}
               />
             </Row>
             <Row label="Session">

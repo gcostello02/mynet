@@ -41,6 +41,21 @@ func insertAdmin(db *sql.DB, username, passwordHash string) (*AdminRecord, error
 	return rec, nil
 }
 
+func updateAdminPasswordHash(db *sql.DB, adminID, passwordHash string) error {
+	res, err := db.Exec(`UPDATE admins SET password_hash = ? WHERE id = ?`, passwordHash, adminID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func countAdmins(db *sql.DB) (int, error) {
 	var n int
 	err := db.QueryRow(`SELECT COUNT(*) FROM admins`).Scan(&n)

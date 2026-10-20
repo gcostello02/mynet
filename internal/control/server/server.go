@@ -109,6 +109,7 @@ func New(cfg Config) (*Server, error) {
 	mux.Handle("POST /v1/network/proof", s.rateLimitMiddleware(s.enrollRL, http.HandlerFunc(s.handleNetworkProof)))
 	mux.Handle("POST /v1/admin/setup", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminSetup)))
 	mux.Handle("POST /v1/admin/login", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminLogin)))
+	mux.Handle("POST /v1/admin/password", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminPasswordChange)))
 	mux.HandleFunc("POST /v1/admin/logout", s.handleAdminLogout)
 	mux.HandleFunc("GET /v1/admin/status", s.handleAdminStatus)
 	mux.HandleFunc("GET /v1/admin/devices", s.handleAdminListDevices)

@@ -146,4 +146,11 @@ func (t *adminSessionTable) delete(id string) {
 	t.mu.Unlock()
 }
 
+// deleteAll removes every admin session (e.g. after password rotation).
+func (t *adminSessionTable) deleteAll() {
+	t.mu.Lock()
+	t.sessions = make(map[string]*AdminSession)
+	t.mu.Unlock()
+}
+
 var errAdminUnauthorized = errors.New("admin unauthorized")
