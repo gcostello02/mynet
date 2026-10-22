@@ -44,12 +44,28 @@ func (n *Node) reconcileVPNPeers() {
 	n.mu.Unlock()
 
 	cfg, err := rt.APIClient().VPNConfig()
+	if isAuthAPIError(err) {
+		if recErr := rt.RecoverDeviceSession(context.Background()); recErr != nil {
+			if rt.AuthTerminal() {
+				if n.Logger != nil {
+					n.Logger.Info("device authorization failed permanently", "err", recErr)
+				}
+				_ = rt.ClearDeviceSession()
+			} else if n.Logger != nil {
+				n.Logger.Debug("vpn config auth failed; session renewal will retry", "err", recErr)
+			}
+			return
+		}
+		if n.Logger != nil {
+			n.Logger.Info("device session renewed after vpn config auth failure")
+		}
+		cfg, err = rt.APIClient().VPNConfig()
+	}
 	if err != nil {
 		if isAuthAPIError(err) {
 			if n.Logger != nil {
-				n.Logger.Info("vpn config refresh denied; clearing device session")
+				n.Logger.Debug("vpn config still unauthorized after renewal", "err", err)
 			}
-			_ = rt.ClearDeviceSession()
 		} else if n.Logger != nil {
 			n.Logger.Debug("vpn config refresh failed; keeping existing peers", "err", err)
 		}

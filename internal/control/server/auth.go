@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-const sessionTokenTTL = 24 * time.Hour
+// SessionTokenTTL is the device bearer token lifetime (stateless HMAC JWT-style).
+var SessionTokenTTL = 24 * time.Hour
 
 type sessionClaims struct {
 	DeviceID  string `json:"device_id"`
@@ -21,7 +22,7 @@ type sessionClaims struct {
 
 // issueSessionToken creates an HMAC-signed opaque bearer token.
 func issueSessionToken(deviceID string, authEpoch int, serverSecret []byte) (string, time.Time, error) {
-	exp := time.Now().UTC().Add(sessionTokenTTL)
+	exp := time.Now().UTC().Add(SessionTokenTTL)
 	claims := sessionClaims{DeviceID: deviceID, ExpiresAt: exp.Unix(), AuthEpoch: authEpoch}
 	payload, err := json.Marshal(claims)
 	if err != nil {

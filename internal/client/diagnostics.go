@@ -93,14 +93,38 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 		ServerURL:       r.cfg.ServerURL,
 		IndependentMode: r.cfg.Network.IndependentMode,
 	}
+	authSnap := r.DeviceAuthSnapshot()
 	if r.api.Token == "" {
-		d.Authentication = "Not logged in"
+		switch authSnap.RecoveryState {
+		case "revoked":
+			d.Authentication = "Revoked (re-enrollment required)"
+		case "failed":
+			d.Authentication = "Session renewal failed (coordinator unreachable?)"
+		default:
+			d.Authentication = "Not logged in"
+		}
 		d.Signaling = "Disconnected"
 		d.TailscaleSignaling = "Unverified"
 		d.TailscaleDataPath = "Unverified"
+		if authSnap.LastError != "" {
+			d.Warnings = append(d.Warnings, "auth: "+authSnap.LastError)
+		}
 		return d, nil
 	}
-	d.Authentication = "Valid (session token present)"
+	switch authSnap.RecoveryState {
+	case "renewing":
+		d.Authentication = "Renewing session"
+	case "revoked":
+		d.Authentication = "Revoked (re-enrollment required)"
+	case "failed":
+		d.Authentication = "Session renewal failing"
+	default:
+		if authSnap.SessionExpiresAt != "" {
+			d.Authentication = "Valid (expires " + authSnap.SessionExpiresAt + ")"
+		} else {
+			d.Authentication = "Valid (session token present)"
+		}
+	}
 	r.refreshICEServers()
 
 	snap := r.SignalingSnapshot()
@@ -109,6 +133,9 @@ func (r *Runtime) Diagnose(peerName string) (Diagnostics, error) {
 	d.SignalingLastMsg = snap.LastMessageType
 	if snap.LastDisconnectReason != "" && snap.State != "Connected" {
 		d.Warnings = append(d.Warnings, "signaling: "+snap.LastDisconnectReason)
+	}
+	if snap.Auth.LastError != "" && snap.Auth.RecoveryState != "stable" {
+		d.Warnings = append(d.Warnings, "auth: "+snap.Auth.LastError)
 	}
 	if !snap.LastMessageAt.IsZero() && d.LastComm == "" {
 		d.LastComm = snap.LastMessageAt.UTC().Format(time.RFC3339)

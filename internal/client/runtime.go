@@ -111,6 +111,13 @@ type Runtime struct {
 	connTiming *connTiming
 	recovery       *recoveryTracker
 	signalingReadyAt time.Time
+
+	authRefreshMu     sync.Mutex
+	authRenewFailures int
+	authLastRenewalAt time.Time
+	authLastError     string
+	authRecoveryState string
+	authTerminalErr   error
 }
 
 // APIClient returns the coordination HTTP client (session token if logged in).
