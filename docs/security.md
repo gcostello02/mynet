@@ -78,4 +78,4 @@ A compromised coordinator could publish rogue WireGuard keys for peers or deny s
 
 ## Reporting issues
 
-Please report vulnerabilities privately to the repository owner rather than in a public issue.
+Report vulnerabilities privately; see [SECURITY.md](../SECURITY.md).

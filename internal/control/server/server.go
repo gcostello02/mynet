@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/gcostello02/mynet/internal/control"
 	"github.com/gcostello02/mynet/internal/dashboard"
 	"github.com/gcostello02/mynet/internal/identity"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 const (

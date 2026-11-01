@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/gcostello02/mynet/internal/identity"
+	"github.com/gorilla/websocket"
 )
 
 // APIClient talks to the coordination server.

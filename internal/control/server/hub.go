@@ -6,8 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/gorilla/websocket"
 	"github.com/gcostello02/mynet/internal/control"
+	"github.com/gorilla/websocket"
 )
 
 type wsClient struct {

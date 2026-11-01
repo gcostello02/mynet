@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/gcostello02/mynet/internal/control"
 	icepkg "github.com/gcostello02/mynet/internal/ice"
 	"github.com/gcostello02/mynet/internal/peer"
+	"github.com/gorilla/websocket"
 )
 
 func TestICEP2PThroughSignaling(t *testing.T) {

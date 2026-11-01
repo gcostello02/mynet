@@ -8,6 +8,7 @@ require (
 	github.com/pion/ice/v4 v4.4.7
 	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.49.0
+	golang.org/x/term v0.41.0
 	golang.org/x/time v0.14.0
 	golang.zx2c4.com/wireguard v0.0.0-20261006164505-2631ce99a06f
 	modernc.org/sqlite v1.34.4
@@ -28,7 +29,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/term v0.41.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
 	modernc.org/libc v1.55.3 // indirect
