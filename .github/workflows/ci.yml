@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: dashboard
     strategy:
+      fail-fast: false
       matrix:
         goarch: [amd64, arm64]
     steps:
@@ -59,4 +60,11 @@ jobs:
       - name: Build mynet-server (linux/${{ matrix.goarch }})
         run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o /tmp/mynet-server ./cmd/mynet-server
       - name: Linux netprobe tests
-        run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go test ./internal/netprobe -count=1
+        # The runner is amd64: run the tests natively there, and only compile
+        # them for arm64 (executing an arm64 binary would fail with "exec format error").
+        run: |
+          if [ "${{ matrix.goarch }}" = "amd64" ]; then
+            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test ./internal/netprobe -count=1
+          else
+            GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o /dev/null ./internal/netprobe
+          fi
