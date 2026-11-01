@@ -66,6 +66,8 @@ func main() {
 		var invStr string
 		if fs.NArg() >= 1 {
 			invStr = fs.Arg(0)
+			// Accept flags after the invitation too: mynet join '<inv>' --name x
+			_ = fs.Parse(fs.Args()[1:])
 		} else {
 			fmt.Fprintln(os.Stderr, "Paste invitation (base64url or JSON), then press Enter:")
 			sc := bufio.NewScanner(os.Stdin)
@@ -615,7 +617,7 @@ func usage() {
 
 Usage:
   mynet init --name <device> [--server <url>] [--tailnet]
-  mynet join <invitation> --name <device>   (invitation is secret; HTTPS coordinator required)
+  mynet join --name <device> <invitation>   (invitation is secret; HTTPS coordinator required)
   mynet admin login --server <https-url>
   mynet login [--enrollment-secret <secret>] [--stay]
   mynet vpn register
