@@ -21,7 +21,7 @@ Backups:
   Mac:   $REPO_MAC/bin/mynet.v0210-good
 
 Recovery:
-  Mesh VPN down → use LAN SSH youruser@10.0.0.50
+  Mesh VPN down → use LAN SSH youruser@192.0.2.10
   Roll back either host independently using the BACKUP paths above
 
 Live after pilot (reference):

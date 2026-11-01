@@ -16,7 +16,7 @@ Do not execute during automated agent sessions. Coordinator (`mynet-server` on m
    - `mynet service status` → IPC true, coordination Connected, VPN data path true
    - `mynet diagnose --peer minipc` → VPN data path ready
    - `ping -c 3 172.31.240.2`
-   - `ssh youruser@10.0.0.50 true` (LAN, not mesh-only)
+   - `ssh youruser@192.0.2.10 true` (LAN, not mesh-only)
 5. `pgrep -fl mynet` → exactly one `_daemon` from libexec path.
 
 **Fail if:** repeated PIDs cycling (crash loop), second manual `_daemon`, identity changed, or LAN SSH broken.
@@ -49,7 +49,7 @@ Do not execute during automated agent sessions. Coordinator (`mynet-server` on m
 
 **Pre:** `systemctl is-enabled mynet-daemon`; coordinator separate.
 
-1. Reboot mini (`ssh youruser@10.0.0.50` after boot).
+1. Reboot mini (`ssh youruser@192.0.2.10` after boot).
 2. On mini:
    ```bash
    systemctl is-active mynet-daemon
