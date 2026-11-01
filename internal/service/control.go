@@ -7,14 +7,16 @@ import (
 	"runtime"
 )
 
-// Start asks the native supervisor to start the daemon.
+// Start asks the native supervisor to start the daemon. On Linux it also
+// enables the unit so the daemon comes back after a reboot (launchd already
+// loads plists under /Library/LaunchDaemons at boot).
 func Start() error {
 	if osGeteuid() != 0 {
 		return fmt.Errorf("service start requires root (sudo mynet service start)")
 	}
 	switch runtime.GOOS {
 	case "linux":
-		return runCmd("systemctl", "start", "mynet-daemon")
+		return runCmd("systemctl", "enable", "--now", "mynet-daemon")
 	case "darwin":
 		layout := SystemLayoutForOS()
 		return runCmd("launchctl", "bootstrap", "system", layout.LaunchDaemonPlist)

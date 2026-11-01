@@ -54,7 +54,7 @@ func cmdService(args []string) {
 			fmt.Println("  start:  sudo mynet service start   # launchctl bootstrap system …")
 			fmt.Println("  note:   reboot loads plists under /Library/LaunchDaemons automatically")
 		} else {
-			fmt.Println("Next: sudo systemctl enable --now mynet-daemon  (or: mynet service start)")
+			fmt.Println("Next: sudo mynet service start   # starts the daemon and enables it at boot")
 		}
 	case "uninstall":
 		fs := flag.NewFlagSet("service uninstall", flag.ExitOnError)

@@ -97,7 +97,7 @@ Details: [docs/v040-m2-join.md](docs/v040-m2-join.md)
 | Command | Purpose |
 |---------|---------|
 | `sudo mynet service install` | Write systemd (Linux) or launchd (macOS) unit |
-| `sudo mynet service start` | Start supervised daemon |
+| `sudo mynet service start` | Start supervised daemon (Linux: also enables it at boot) |
 | `sudo mynet service stop` | Stop daemon |
 | `mynet service status` | Health and VPN summary |
 | `sudo mynet service upgrade --candidate ./bin/mynet` | Replace supervised binary |
