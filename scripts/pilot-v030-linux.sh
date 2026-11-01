@@ -49,7 +49,7 @@ Owner user:   ${OWNER}
    ${LIVE} status
    ${LIVE} diagnose --peer macbook | head -40
 
-7. Connectivity (mesh only; LAN SSH on 10.0.0.50 is out of band):
+7. Connectivity (mesh only; LAN SSH on 192.0.2.10 is out of band):
    ping -c 5 172.31.240.1
 
 --- Rollback to manual V0.2.10 (run if pilot fails at any step after step 2) ---

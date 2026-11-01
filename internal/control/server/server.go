@@ -11,11 +11,13 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/gcostello02/mynet/internal/control"
+	"github.com/gcostello02/mynet/internal/dashboard"
 	"github.com/gcostello02/mynet/internal/identity"
 )
 
@@ -35,23 +37,27 @@ type Config struct {
 	ICE              ICEConfig
 	VPN              VPNConfig
 	DataPath         string // SQLite path for device persistence
+	SetupToken       string // optional remote bootstrap token (X-Mynet-Setup-Token)
+	SecureCookies    bool   // set true behind HTTPS
 }
 
 // Server is the MyNet coordination / signaling server.
 type Server struct {
-	cfg   Config
-	store *Store
-	hub   *Hub
-	http  *http.Server
-	log   *slog.Logger
+	cfg                 Config
+	store               *Store
+	hub                 *Hub
+	http                *http.Server
+	log                 *slog.Logger
+	enrollRL            *ipLimiter
+	loginRL             *ipLimiter
+	coordinatorIdentity *CoordinatorIdentity
+	bootstrap           bootstrapSlot
+	setupMu             sync.Mutex
 }
 
 func New(cfg Config) (*Server, error) {
 	if len(cfg.ServerSecret) < 32 {
 		return nil, errors.New("server secret must be at least 32 bytes")
-	}
-	if cfg.EnrollmentSecret == "" {
-		return nil, errors.New("enrollment secret is required")
 	}
 	if cfg.NetworkID == "" {
 		cfg.NetworkID = "default"
@@ -60,24 +66,59 @@ func New(cfg Config) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	store := NewStore(cfg.NetworkID, hashEnrollmentSecret(cfg.EnrollmentSecret))
-	store.dbPath = cfg.DataPath
+	store := NewStore(cfg.NetworkID, "")
+	if cfg.EnrollmentSecret != "" {
+		store.enrollmentSecretHash = hashEnrollmentSecret(cfg.EnrollmentSecret)
+	}
 	if cfg.DataPath != "" {
-		if err := LoadDevicesFromSQLite(cfg.DataPath, store); err != nil {
-			return nil, fmt.Errorf("load devices db: %w", err)
+		if err := attachCoordinatorDB(store, cfg.DataPath); err != nil {
+			return nil, fmt.Errorf("load coordinator db: %w", err)
 		}
 		log.Info("loaded devices from database", "path", cfg.DataPath, "count", deviceCount(store))
+		// V0.3 migration: legacy enrollment only when devices already exist in DB.
+		if cfg.EnrollmentSecret != "" && deviceCount(store) > 0 && !store.meta.LegacyEnrollmentEnabled {
+			if err := enableLegacyEnrollmentMeta(store.sqlDB, store.meta); err != nil {
+				return nil, fmt.Errorf("enable legacy enrollment: %w", err)
+			}
+		}
+	} else if cfg.EnrollmentSecret != "" {
+		store.meta.LegacyEnrollmentEnabled = true
 	}
 	s := &Server{
-		cfg:   cfg,
-		store: store,
-		hub:   NewHub(log),
-		log:   log,
+		cfg:      cfg,
+		store:    store,
+		hub:      NewHub(log),
+		log:      log,
+		enrollRL: newIPLimiter(30, 10),
+		loginRL:  newIPLimiter(10, 5),
+	}
+	if cfg.DataPath != "" && store.meta.SetupComplete {
+		id, err := loadCoordinatorIdentity(cfg.DataPath, store.meta.CoordinatorPublicKeyB64, store.meta.CoordinatorFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("coordinator identity: %w", err)
+		}
+		s.coordinatorIdentity = id
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
-	mux.HandleFunc("POST /v1/enroll", s.handleEnroll)
+	mux.Handle("POST /v1/enroll", s.rateLimitMiddleware(s.enrollRL, http.HandlerFunc(s.handleEnroll)))
 	mux.HandleFunc("POST /v1/auth", s.handleAuth)
+	mux.HandleFunc("GET /v1/network/public", s.handleNetworkPublic)
+	mux.Handle("GET /v1/setup/status", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleSetupStatus)))
+	mux.Handle("GET /v1/setup/bootstrap", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleSetupBootstrap)))
+	mux.Handle("POST /v1/network/proof", s.rateLimitMiddleware(s.enrollRL, http.HandlerFunc(s.handleNetworkProof)))
+	mux.Handle("POST /v1/admin/setup", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminSetup)))
+	mux.Handle("POST /v1/admin/login", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminLogin)))
+	mux.Handle("POST /v1/admin/password", s.rateLimitMiddleware(s.loginRL, http.HandlerFunc(s.handleAdminPasswordChange)))
+	mux.HandleFunc("POST /v1/admin/logout", s.handleAdminLogout)
+	mux.HandleFunc("GET /v1/admin/status", s.handleAdminStatus)
+	mux.HandleFunc("GET /v1/admin/devices", s.handleAdminListDevices)
+	mux.HandleFunc("PATCH /v1/admin/devices/{id}", s.handleAdminPatchDevice)
+	mux.HandleFunc("POST /v1/admin/devices/{id}/revoke", s.handleAdminRevokeDevice)
+	mux.HandleFunc("GET /v1/admin/invitations", s.handleAdminListInvitations)
+	mux.HandleFunc("POST /v1/admin/invitations", s.handleAdminCreateInvitation)
+	mux.HandleFunc("DELETE /v1/admin/invitations/{id}", s.handleAdminRevokeInvitation)
+	mux.HandleFunc("PUT /v1/admin/network/legacy-enrollment", s.handleAdminLegacyEnrollment)
 	mux.HandleFunc("GET /v1/peers", s.withAuth(s.handlePeers))
 	mux.HandleFunc("GET /v1/ice-servers", s.withAuth(s.handleICEServersAuth))
 	mux.HandleFunc("POST /v1/sessions", s.withAuth(s.handleCreateSession))
@@ -85,10 +126,17 @@ func New(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /v1/vpn/register", s.withAuth(s.handleVPNRegister))
 	mux.HandleFunc("GET /v1/vpn/config", s.withAuth(s.handleVPNConfig))
 
+	if assets, err := dashboard.FS(); err == nil {
+		dashboard.NewHandler(assets).Mount(mux)
+	}
+
 	s.http = &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           s.limitBody(mux),
+		Handler:           s.limitBody(s.adminNoStoreMiddleware(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := s.initBootstrapIfNeeded(); err != nil {
+		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	return s, nil
 }
@@ -132,11 +180,20 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "invalid timestamp")
 		return
 	}
-	gotHash := hashEnrollmentSecret(req.EnrollmentSecret)
-	if !constantTimeSecretMatch(gotHash, s.store.EnrollmentSecretHash()) {
-		httpError(w, http.StatusUnauthorized, "enrollment denied")
+	enrollFields := controlEnrollFields{
+		EnrollmentSecret:       req.EnrollmentSecret,
+		EnrollmentToken:        req.EnrollmentToken,
+		CoordinatorFingerprint: req.CoordinatorFingerprint,
+	}
+	if err := s.validateEnrollmentGate(enrollFields); err != nil {
+		code := http.StatusUnauthorized
+		if err == errInvitationExpired || err == errInvitationExhausted {
+			code = http.StatusGone
+		}
+		httpError(w, code, "enrollment denied")
 		return
 	}
+	invitationToken := req.EnrollmentToken
 	pub, err := base64.StdEncoding.DecodeString(req.PublicKey)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		httpError(w, http.StatusBadRequest, "invalid public key")
@@ -163,12 +220,29 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		NetworkID: s.store.NetworkID(),
 		Enrolled:  time.Now().UTC(),
 	}
-	if err := s.store.EnrollDevice(rec); err != nil {
-		if err == errNameTaken || err == errDeviceExists {
-			httpError(w, http.StatusConflict, err.Error())
+	var enrollErr error
+	if invitationToken != "" {
+		enrollErr = s.store.EnrollDeviceWithInvitationAtomic(invitationToken, rec)
+	} else {
+		enrollErr = s.store.EnrollDevice(rec)
+	}
+	if enrollErr != nil {
+		if enrollErr == errNameTaken || enrollErr == errDeviceExists || enrollErr == errRevoked {
+			code := http.StatusConflict
+			if enrollErr == errRevoked {
+				code = http.StatusForbidden
+			}
+			if enrollErr == errInvitationExpired || enrollErr == errInvitationExhausted || enrollErr == errInvitationInvalid {
+				code = http.StatusGone
+			}
+			httpError(w, code, enrollErr.Error())
 			return
 		}
-		httpError(w, http.StatusBadRequest, err.Error())
+		if enrollErr == errInvitationExpired || enrollErr == errInvitationExhausted || enrollErr == errInvitationInvalid {
+			httpError(w, http.StatusGone, "enrollment denied")
+			return
+		}
+		httpError(w, http.StatusBadRequest, enrollErr.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{
@@ -208,7 +282,8 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnauthorized, "signature verification failed")
 		return
 	}
-	token, exp, err := issueSessionToken(req.DeviceID, s.cfg.ServerSecret)
+	epoch := s.store.DeviceAuthEpoch(req.DeviceID)
+	token, exp, err := issueSessionToken(req.DeviceID, epoch, s.cfg.ServerSecret)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "token issue failed")
 		return
@@ -329,13 +404,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnauthorized, "missing token")
 		return
 	}
-	deviceID, err := verifySessionToken(token, s.cfg.ServerSecret)
+	deviceID, err := s.verifyDeviceBearer(token)
 	if err != nil {
 		httpError(w, http.StatusUnauthorized, "invalid token")
-		return
-	}
-	if _, ok := s.store.GetDevice(deviceID); !ok {
-		httpError(w, http.StatusUnauthorized, "unknown device")
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -387,7 +458,7 @@ func (s *Server) withAuth(next authedHandler) http.HandlerFunc {
 			httpError(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		deviceID, err := verifySessionToken(token, s.cfg.ServerSecret)
+		deviceID, err := s.verifyDeviceBearer(token)
 		if err != nil {
 			httpError(w, http.StatusUnauthorized, "invalid token")
 			return

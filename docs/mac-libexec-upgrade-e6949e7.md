@@ -87,7 +87,7 @@ Expect new log lines: `daemon IPC listening`, `supervised VPN up starting`, `sup
 
 ```bash
 ping -c 3 172.31.240.2
-ssh youruser@10.0.0.50 true
+ssh youruser@192.0.2.10 true
 ```
 
 ## Rollback

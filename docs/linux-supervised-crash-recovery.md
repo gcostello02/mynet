@@ -6,7 +6,7 @@
 
 - Mini PC: `mynet-daemon` unit installed, **boot autostart disabled** (as today).
 - MacBook: manual daemon running; mesh was healthy before the test.
-- LAN SSH: `ssh youruser@10.0.0.50` (out-of-band).
+- LAN SSH: `ssh youruser@192.0.2.10` (out-of-band).
 - Record before state: `mynet service status`, `mynet diagnose --peer macbook`, `systemctl show mynet-daemon -p NRestarts,MainPID`.
 
 **Procedure (operator only — not automated)**

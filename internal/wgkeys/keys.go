@@ -132,6 +132,15 @@ func (id *Identity) PublicKeyHex() (string, error) {
 }
 
 // SaveAssignedVPNIPv4 records the coordination server's assigned address in wg.json.
+// Clear removes persisted WireGuard keys (used when replacing device identity).
+func Clear(stateDir string) error {
+	err := os.Remove(Path(stateDir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func SaveAssignedVPNIPv4(stateDir string, vpnIPv4 string) error {
 	if vpnIPv4 == "" {
 		return nil

@@ -11,7 +11,7 @@ cat <<EOF
 === MyNet ICE fix — MacBook manual daemon (no launchd) ===
 
 Prereq: ${CAND} built on darwin/arm64 or amd64 with vcs.modified=false.
-LAN SSH to mini remains: ssh youruser@10.0.0.50
+LAN SSH to mini remains: ssh youruser@192.0.2.10
 
 0. Verify candidate:
    go version -m ${CAND} | grep vcs

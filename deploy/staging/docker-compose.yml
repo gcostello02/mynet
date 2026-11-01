@@ -1,0 +1,166 @@
+# Isolated M2 real-network staging. Does not touch production mesh or Tailscale.
+# Operator must review and run: deploy/staging/scripts/run-acceptance.sh
+name: mynet-m2-staging
+
+networks:
+  staging:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.200.0.0/24
+
+services:
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile
+    image: mynet-staging:latest
+    entrypoint: ["/usr/local/bin/mynet-staging-coord-entrypoint.sh"]
+    environment:
+      MYNET_SERVER_SECRET: ${MYNET_SERVER_SECRET}
+      MYNET_DATA_PATH: /data/coordinator.db
+      MYNET_VPN_CIDR: 10.88.0.0/24
+      MYNET_STUN_URLS: stun:stun.l.google.com:19302
+      MYNET_ENROLLMENT_SECRET: ${MYNET_ENROLLMENT_SECRET:-staging-enrollment-secret-not-for-prod}
+      MYNET_LISTEN: ":8080"
+      MYNET_SECURE_COOKIES: "1"
+    volumes:
+      - coord-data:/data
+    networks:
+      staging:
+        ipv4_address: 10.200.0.10
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # One-off admin / join-prep commands: docker compose run --rm admin-toolbox ...
+  admin-toolbox:
+    image: mynet-staging:latest
+    # compose run supplies: -lc "<command>" (do not prefix with bash — entrypoint is already bash)
+    entrypoint: ["/bin/bash"]
+    command: ["-c", "exit 0"]
+    environment:
+      MYNET_STATE_DIR: /admin-state
+    volumes:
+      - ./admin-state:/admin-state
+      - ./artifacts:/artifacts:ro
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
+    networks:
+      - staging
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+
+  # One-off consumed-invitation replay (ephemeral state; no daemon).
+  invitation-replay:
+    profiles: ["tools"]
+    image: mynet-staging:latest
+    entrypoint: ["/bin/bash"]
+    command: ["-c", "exit 0"]
+    environment:
+      MYNET_STATE_DIR: /replay-state
+      MYNET_COORD_URL: https://staging-coord.mynet.test
+    tmpfs:
+      - /replay-state:rw,noexec,nosuid,mode=0700,size=32m
+    volumes:
+      - ./artifacts:/artifacts:ro
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
+    networks:
+      - staging
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+
+  proxy:
+    image: caddy:2-alpine
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18443:443"
+    volumes:
+      - ./certs:/certs:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      staging:
+        ipv4_address: 10.200.0.11
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+
+  client-a:
+    profiles: ["clients"]
+    image: mynet-staging:latest
+    privileged: true
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    devices:
+      - /dev/net/tun
+    environment:
+      MYNET_CLIENT_NAME: client-a
+      MYNET_COORD_URL: https://staging-coord.mynet.test
+      MYNET_STATE_DIR: /var/lib/mynet
+    volumes:
+      - client-a-state:/var/lib/mynet
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
+      - ./artifacts:/artifacts
+    depends_on:
+      proxy:
+        condition: service_started
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+    networks:
+      staging:
+        ipv4_address: 10.200.0.21
+
+  client-b:
+    profiles: ["clients"]
+    image: mynet-staging:latest
+    privileged: true
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    devices:
+      - /dev/net/tun
+    environment:
+      MYNET_CLIENT_NAME: client-b
+      MYNET_COORD_URL: https://staging-coord.mynet.test
+      MYNET_STATE_DIR: /var/lib/mynet
+    volumes:
+      - client-b-state:/var/lib/mynet
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
+      - ./artifacts:/artifacts
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+    depends_on:
+      proxy:
+        condition: service_started
+    networks:
+      staging:
+        ipv4_address: 10.200.0.22
+
+  client-c:
+    profiles: ["clients"]
+    image: mynet-staging:latest
+    privileged: true
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    devices:
+      - /dev/net/tun
+    environment:
+      MYNET_CLIENT_NAME: client-c
+      MYNET_COORD_URL: https://staging-coord.mynet.test
+      MYNET_STATE_DIR: /var/lib/mynet
+    volumes:
+      - client-c-state:/var/lib/mynet
+      - ./certs/ca.crt:/usr/local/share/ca-certificates/mynet-staging-ca.crt:ro
+      - ./artifacts:/artifacts
+    extra_hosts:
+      - "staging-coord.mynet.test:10.200.0.11"
+    depends_on:
+      proxy:
+        condition: service_started
+    networks:
+      staging:
+        ipv4_address: 10.200.0.23
+
+volumes:
+  coord-data:
+  client-a-state:
+  client-b-state:
+  client-c-state:

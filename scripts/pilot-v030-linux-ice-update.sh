@@ -13,7 +13,7 @@ cat <<EOF
 === MyNet V0.3.0 ICE session fix — mini PC (systemd supervised) ===
 
 Prereq: ${CAND} built with vcs.modified=false (scripts/build-v030-candidate.sh).
-LAN SSH recovery: ssh youruser@10.0.0.50 (independent of mesh VPN).
+LAN SSH recovery: ssh youruser@192.0.2.10 (independent of mesh VPN).
 
 0. Verify candidate (no sudo):
    go version -m ${CAND} | grep vcs

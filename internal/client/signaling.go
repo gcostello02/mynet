@@ -14,6 +14,7 @@ type SignalingSnapshot struct {
 	ReconnectAttempts    int
 	LastMessageType      string
 	LastMessageAt        time.Time
+	Auth                 DeviceAuthSnapshot
 }
 
 func (r *Runtime) SignalingSnapshot() SignalingSnapshot {
@@ -33,6 +34,7 @@ func (r *Runtime) signalingSnapshotLocked() SignalingSnapshot {
 	snap.ReconnectAttempts = r.reconnectAttempts
 	snap.LastMessageType = r.lastWSMessageType
 	snap.LastMessageAt = r.lastWSMessageAt
+	snap.Auth = r.deviceAuthSnapshotLocked()
 	return snap
 }
 
@@ -56,13 +58,21 @@ func (r *Runtime) signalingLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			break
 		}
-		if err := r.load(); err != nil || r.api == nil || r.api.Token == "" {
+		if err := r.EnsureDeviceSession(ctx); err != nil {
 			r.mu.Lock()
-			r.lastWSDisconnect = "not authenticated"
+			if r.authTerminalErr != nil {
+				r.lastWSDisconnect = "authorization revoked"
+			} else {
+				r.lastWSDisconnect = "session renewal failed"
+			}
 			r.mu.Unlock()
+			wait := backoff
+			if r.AuthTerminal() {
+				wait = 2 * time.Minute
+			}
 			select {
 			case <-ctx.Done():
-			case <-time.After(backoff):
+			case <-time.After(wait):
 			}
 			continue
 		}
@@ -75,10 +85,23 @@ func (r *Runtime) signalingLoop(ctx context.Context) {
 		r.mu.Lock()
 		r.signalingConnecting = false
 		if err != nil && ctx.Err() == nil {
-			r.lastWSDisconnect = err.Error()
+			if isWebSocketAuthFailure(err) {
+				_ = r.RecoverDeviceSession(ctx)
+				r.lastWSDisconnect = "session expired; renewing"
+			} else {
+				r.lastWSDisconnect = err.Error()
+			}
 			r.reconnectAttempts++
 		}
 		r.mu.Unlock()
+
+		if err != nil && isWebSocketAuthFailure(err) && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
+			continue
+		}
 
 		if ctx.Err() != nil {
 			break
@@ -109,30 +132,11 @@ func (r *Runtime) runOneSignalingSession(ctx context.Context) error {
 		return err
 	}
 	sessionCtx, cancel := context.WithCancel(ctx)
-	r.mu.Lock()
-	if r.ws != nil {
-		_ = r.ws.Close()
-	}
-	r.ws = conn
-	r.wsCancel = cancel
-	r.connState = StateOnline
-	r.reconnectAttempts = 0
-	r.lastWSDisconnect = ""
-	r.signalingReadyAt = time.Now()
-	r.mu.Unlock()
+	r.replaceSignalingWebSocket(conn, cancel)
 
 	defer func() {
 		cancel()
-		r.mu.Lock()
-		if r.ws == conn {
-			r.ws = nil
-		}
-		if r.dataConn == nil {
-			if r.connState == StateOnline || r.connState == StateConnecting {
-				r.connState = StateRegistered
-			}
-		}
-		r.mu.Unlock()
+		r.clearSignalingWebSocket(conn)
 		_ = conn.Close()
 	}()
 

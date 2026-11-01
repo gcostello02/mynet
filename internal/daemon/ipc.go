@@ -43,6 +43,7 @@ type ProfileInfo struct {
 type Response struct {
 	OK          bool                `json:"ok"`
 	Error       string              `json:"error,omitempty"`
+	PingRTTMs   float64             `json:"ping_rtt_ms,omitempty"`
 	Status      *Status             `json:"status,omitempty"`
 	Preflight   *PreflightResponse  `json:"preflight,omitempty"`
 	Diagnostics *client.Diagnostics `json:"diagnostics,omitempty"`

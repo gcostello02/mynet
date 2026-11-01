@@ -42,8 +42,10 @@ type Runtime struct {
 	cfg      config.ClientConfig
 	api      *control.APIClient
 
-	ws       *websocket.Conn
-	wsCancel context.CancelFunc
+	ws         *websocket.Conn
+	wsCancel   context.CancelFunc
+	wsWriteMu  sync.Mutex // serializes all WebSocket writes (gorilla allows one writer)
+	wsGen      uint64     // bumped on each connection swap; writers hold wsWriteMu during I/O
 
 	activeSession        string
 	peerName             string
@@ -69,6 +71,7 @@ type Runtime struct {
 	connectWait  chan error // initiator waits for ICE result
 	iceCancel    context.CancelFunc
 	iceCancelFor string
+	iceDialPeer  string // peer name for in-flight runICESession dial (VPN multi-peer)
 
 	incomingICE     map[string]bool
 	peerInFlightICE map[string]string // peer name -> session ID currently negotiating (VPN + app ICE)
@@ -108,11 +111,28 @@ type Runtime struct {
 	connTiming *connTiming
 	recovery       *recoveryTracker
 	signalingReadyAt time.Time
+
+	authRefreshMu     sync.Mutex
+	authRenewFailures int
+	authLastRenewalAt time.Time
+	authLastError     string
+	authRecoveryState string
+	authTerminalErr   error
 }
 
 // APIClient returns the coordination HTTP client (session token if logged in).
 func (r *Runtime) APIClient() *control.APIClient {
-	return r.api
+	r.mu.Lock()
+	api := r.api
+	r.mu.Unlock()
+	return api
+}
+
+// SetAPIClientForTest injects an API client (daemon package tests).
+func (r *Runtime) SetAPIClientForTest(api *control.APIClient) {
+	r.mu.Lock()
+	r.api = api
+	r.mu.Unlock()
 }
 
 func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
@@ -244,11 +264,7 @@ func (r *Runtime) ensureWebSocket() error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	r.mu.Lock()
-	r.ws = conn
-	r.wsCancel = cancel
-	r.connState = StateOnline
-	r.mu.Unlock()
+	r.replaceSignalingWebSocket(conn, cancel)
 	go r.wsReadLoop(ctx, conn)
 	return nil
 }
@@ -260,17 +276,7 @@ func (r *Runtime) wsReadLoop(ctx context.Context, conn *websocket.Conn) {
 		}
 		_, data, err := conn.ReadMessage()
 		if err != nil {
-			r.mu.Lock()
-			r.ws = nil
-			if r.wsCancel != nil {
-				r.wsCancel()
-			}
-			if r.dataConn == nil {
-				if r.connState == StateOnline || r.connState == StateConnecting {
-					r.connState = StateRegistered
-				}
-			}
-			r.mu.Unlock()
+			r.clearSignalingWebSocket(conn)
 			return
 		}
 		var msg control.WSMessage
@@ -432,18 +438,27 @@ func (r *Runtime) beginIncomingICESession(ready control.SessionReadyPayload) boo
 		r.peerInFlightICE[ready.PeerName] = ready.SessionID
 	}
 	if r.activeSession != "" && r.activeSession != ready.SessionID {
-		if r.iceCancel != nil {
-			r.iceCancel()
-			r.iceCancel = nil
-			r.iceCancelFor = ""
-		}
-		if r.dataConn != nil {
-			_ = r.dataConn.Close()
-			r.dataConn = nil
-		}
-		if r.iceSession != nil {
-			_ = r.iceSession.Close()
-			r.iceSession = nil
+		if r.vpnMode {
+			if ready.PeerName != "" && r.peerName == ready.PeerName && r.iceCancel != nil {
+				r.iceCancel()
+				r.iceCancel = nil
+				r.iceCancelFor = ""
+				r.iceDialPeer = ""
+			}
+		} else {
+			if r.iceCancel != nil {
+				r.iceCancel()
+				r.iceCancel = nil
+				r.iceCancelFor = ""
+			}
+			if r.dataConn != nil {
+				_ = r.dataConn.Close()
+				r.dataConn = nil
+			}
+			if r.iceSession != nil {
+				_ = r.iceSession.Close()
+				r.iceSession = nil
+			}
 		}
 	}
 	r.activeSession = ready.SessionID
@@ -767,10 +782,15 @@ func (r *Runtime) runICESession(iceCtx context.Context, sessionID, peerName stri
 	dialCtx, dialCancel := context.WithTimeout(iceCtx, icepkg.ConnectTimeout)
 	r.mu.Lock()
 	if r.iceCancel != nil && r.iceCancelFor != sessionID {
-		r.iceCancel()
+		if !r.vpnMode || peerName == "" || r.iceDialPeer == "" || r.iceDialPeer == peerName {
+			r.iceCancel()
+		}
 	}
 	r.iceCancel = dialCancel
 	r.iceCancelFor = sessionID
+	if r.vpnMode && peerName != "" {
+		r.iceDialPeer = peerName
+	}
 	r.mu.Unlock()
 	defer func() {
 		dialCancel()
@@ -778,6 +798,9 @@ func (r *Runtime) runICESession(iceCtx context.Context, sessionID, peerName stri
 		if r.iceCancelFor == sessionID {
 			r.iceCancel = nil
 			r.iceCancelFor = ""
+			if r.vpnMode && r.iceDialPeer == peerName {
+				r.iceDialPeer = ""
+			}
 		}
 		r.mu.Unlock()
 	}()
@@ -853,14 +876,32 @@ func (r *Runtime) Ping(peerName string) (time.Duration, error) {
 		return 0, err
 	}
 	r.mu.Lock()
+	vpn := r.vpnMode
+	if vpn && peerName != "" {
+		if l, ok := r.peerLinks[peerName]; ok && l != nil && l.Conn != nil && !r.peerLinkStaleLocked(l) {
+			conn := l.Conn
+			r.mu.Unlock()
+			rtt, err := peer.PingRTT(conn, 5*time.Second)
+			if err != nil {
+				return 0, err
+			}
+			return rtt, nil
+		}
+	}
 	conn := r.dataConn
 	state := r.connState
 	if peerName != "" && r.peerName != peerName {
 		r.mu.Unlock()
+		if vpn {
+			return 0, fmt.Errorf("peer %q not connected (VPN transport not ready)", peerName)
+		}
 		return 0, fmt.Errorf("not connected to peer %q", peerName)
 	}
 	r.mu.Unlock()
 	if state != StateConnected || conn == nil {
+		if vpn {
+			return 0, fmt.Errorf("peer %q not connected (VPN transport not ready)", peerName)
+		}
 		return 0, errors.New("not directly connected; run mynet connect --peer <name>")
 	}
 	rtt, err := peer.PingRTT(conn, 5*time.Second)
@@ -930,6 +971,8 @@ func (r *Runtime) Status() (Status, error) {
 }
 
 func (r *Runtime) sendSignal(sessionID string, msg control.WSMessage) error {
+	r.wsWriteMu.Lock()
+	defer r.wsWriteMu.Unlock()
 	r.mu.Lock()
 	ws := r.ws
 	r.mu.Unlock()
@@ -988,14 +1031,8 @@ func (r *Runtime) dispatchSignal(msg control.WSMessage) {
 
 // Down closes connections without touching system networking.
 func (r *Runtime) Down() error {
+	r.closeSignalingWebSocket()
 	r.mu.Lock()
-	if r.wsCancel != nil {
-		r.wsCancel()
-	}
-	if r.ws != nil {
-		_ = r.ws.Close()
-		r.ws = nil
-	}
 	if r.dataConn != nil {
 		_ = r.dataConn.Close()
 		r.dataConn = nil

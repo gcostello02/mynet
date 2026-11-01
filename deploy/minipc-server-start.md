@@ -1,6 +1,8 @@
-# Mini PC coordination server (persistent SQLite)
+# Mini PC coordination server (persistent SQLite) — **legacy V0.3**
 
-Use this on the host that runs `mynet-server` behind Cloudflare Tunnel (`https://mesh.example.com`).
+> **V0.4:** Use Docker coordinator + CLI setup instead — [deploy/coordinator/minipc.md](coordinator/minipc.md).
+
+Use this on the host that runs **native** `mynet-server` behind Cloudflare Tunnel (`https://mesh.example.com`).
 
 ## Layout
 

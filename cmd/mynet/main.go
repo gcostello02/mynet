@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gcostello02/mynet/internal/client"
+	"github.com/gcostello02/mynet/internal/invitation"
 	"github.com/gcostello02/mynet/internal/config"
 	"github.com/gcostello02/mynet/internal/control"
 	"github.com/gcostello02/mynet/internal/daemon"
@@ -55,6 +58,43 @@ func main() {
 			}
 		}
 		fmt.Printf("Initialized device %q in %s\n", *name, stateDir())
+	case "join":
+		fs := flag.NewFlagSet("join", flag.ExitOnError)
+		name := fs.String("name", "", "device name (required)")
+		force := fs.Bool("force", false, "replace existing identity (single-network V0.4)")
+		_ = fs.Parse(os.Args[2:])
+		var invStr string
+		if fs.NArg() >= 1 {
+			invStr = fs.Arg(0)
+		} else {
+			fmt.Fprintln(os.Stderr, "Paste invitation (base64url or JSON), then press Enter:")
+			sc := bufio.NewScanner(os.Stdin)
+			if sc.Scan() {
+				invStr = strings.TrimSpace(sc.Text())
+			}
+		}
+		if invStr == "" {
+			fmt.Fprintln(os.Stderr, "invitation required")
+			os.Exit(2)
+		}
+		inv, err := invitation.Parse(invStr)
+		if err != nil {
+			fatal(err)
+		}
+		if *name == "" {
+			fmt.Fprintln(os.Stderr, "--name is required")
+			os.Exit(2)
+		}
+		if daemon.DaemonReachable(stateDir()) {
+			fatal(fmt.Errorf("supervised daemon is running; stop it before join (%s)", client.JoinRecoveryHint))
+		}
+		if err := rt.Join(inv, client.JoinOptions{DeviceName: *name, Force: *force}); err != nil {
+			fatal(err)
+		}
+		fmt.Println("Joined network successfully. Device enrolled and VPN registered.")
+		fmt.Println("Next: mynet service install && mynet service start  (or mynet up for manual VPN)")
+	case "admin":
+		cmdAdmin(os.Args[2:])
 	case "login":
 		fs := flag.NewFlagSet("login", flag.ExitOnError)
 		enroll := fs.String("enrollment-secret", "", "network enrollment secret (required on first enroll)")
@@ -114,6 +154,21 @@ func main() {
 		fs := flag.NewFlagSet("ping", flag.ExitOnError)
 		peer := fs.String("peer", "", "peer device name")
 		_ = fs.Parse(os.Args[2:])
+		if *peer == "" {
+			fmt.Fprintln(os.Stderr, "--peer is required")
+			os.Exit(2)
+		}
+		if daemon.DaemonReachable(stateDir()) {
+			resp, err := daemon.CallIPCWithPeer(stateDir(), "peer_ping", *peer)
+			if err != nil {
+				fatal(err)
+			}
+			if !resp.OK {
+				fatal(fmt.Errorf("%s", resp.Error))
+			}
+			fmt.Printf("RTT: %s (vpn icmp)\n", formatRTT(time.Duration(resp.PingRTTMs*float64(time.Millisecond))))
+			break
+		}
 		rtt, err := rt.Ping(*peer)
 		if err != nil {
 			fatal(err)
@@ -478,8 +533,10 @@ func printDiagnostics(d client.Diagnostics) {
 		fmt.Println("Connection timing (last attempt):")
 		fmt.Printf("  Attempt: %d  session %s\n", d.ConnTiming.Attempt, trimSessionID(d.ConnTiming.SessionID))
 		for _, stage := range client.ConnStageOrder() {
-			if elapsed, ok := d.ConnTiming.Stages[stage]; ok {
+			if elapsed, ok := d.ConnTiming.Stages[stage]; ok && client.ConnStageDurationOK(elapsed) {
 				fmt.Printf("  %-28s %s\n", stage, elapsed.Round(time.Millisecond))
+			} else if ok {
+				fmt.Printf("  %-28s %s\n", stage, "n/a")
 			}
 		}
 	}
@@ -558,6 +615,8 @@ func usage() {
 
 Usage:
   mynet init --name <device> [--server <url>] [--tailnet]
+  mynet join <invitation> --name <device>   (invitation is secret; HTTPS coordinator required)
+  mynet admin login --server <https-url>
   mynet login [--enrollment-secret <secret>] [--stay]
   mynet vpn register
   mynet peers

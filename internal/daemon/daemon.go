@@ -45,7 +45,12 @@ type Node struct {
 	tunName         string
 	vpnIP           netip.Addr
 	peers           map[string]PeerStatus
+	vpnPeerKeys     map[string]string // peer name -> wg public key hex
+	reconcileMu     sync.Mutex
 	peerCancel      context.CancelFunc
+	peerWorkerCtx   context.Context // parent ctx for per-peer ICE workers (cleared on Down)
+	selfDeviceID    string
+	peerWorkers     map[string]context.CancelFunc // per-peer VPN ICE worker
 	signalingCancel context.CancelFunc
 	netWatch        *NetWatcher
 }
@@ -206,6 +211,7 @@ func (n *Node) Up(ctx context.Context) error {
 		return abort("wireguard up on "+name, err)
 	}
 
+	vpnPeerKeys := make(map[string]string, len(vpnCfg.Peers))
 	for _, p := range vpnCfg.Peers {
 		peerIP := netip.MustParseAddr(p.VPNIPv4)
 		if err := tunMgr.AddPeerRoute(peerIP); err != nil {
@@ -214,10 +220,12 @@ func (n *Node) Up(ctx context.Context) error {
 		if err := engine.SetPeer(p.WGPublicKey, peerIP, p.VPNIPv4+"/32"); err != nil {
 			return abort(fmt.Sprintf("wireguard peer %s", p.Name), err)
 		}
+		vpnPeerKeys[p.Name] = p.WGPublicKey
 	}
 
 	n.mu.Lock()
 	n.running = true
+	n.vpnPeerKeys = vpnPeerKeys
 	n.rt = rt
 	n.engine = engine
 	n.bind = bind
@@ -227,10 +235,13 @@ func (n *Node) Up(ctx context.Context) error {
 	n.peers = make(map[string]PeerStatus)
 	peerCtx, peerCancel := context.WithCancel(context.Background())
 	n.peerCancel = peerCancel
+	n.peerWorkerCtx = peerCtx
+	n.selfDeviceID = id.DeviceID
 	n.mu.Unlock()
 
 	n.startPeerWorkers(peerCtx, rt, id.DeviceID, vpnCfg.Peers)
 	n.startNetWatch(peerCtx)
+	n.startVPNReconcile(peerCtx)
 	return nil
 }
 
@@ -292,6 +303,8 @@ func (n *Node) Down() error {
 	tunMgr := n.tunMgr
 	tunName := n.tunName
 	n.peerCancel = nil
+	n.peerWorkerCtx = nil
+	n.selfDeviceID = ""
 	n.running = false
 	n.engine = nil
 	n.bind = nil
@@ -299,6 +312,7 @@ func (n *Node) Down() error {
 	n.tunName = ""
 	n.vpnIP = netip.Addr{}
 	n.peers = nil
+	n.vpnPeerKeys = nil
 	n.mu.Unlock()
 
 	n.stopNetWatch()

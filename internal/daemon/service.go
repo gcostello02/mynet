@@ -171,6 +171,18 @@ func (s *Service) handleConn(c net.Conn) {
 			return
 		}
 		writeResp(c, Response{OK: true, Peers: peers})
+	case "peer_ping":
+		peer := req.Peer
+		if peer == "" {
+			writeResp(c, Response{OK: false, Error: "peer required"})
+			return
+		}
+		rtt, err := s.Node.PingPeerICMP(peer)
+		if err != nil {
+			writeResp(c, Response{OK: false, Error: err.Error()})
+			return
+		}
+		writeResp(c, Response{OK: true, PingRTTMs: float64(rtt.Microseconds()) / 1000.0})
 	case "quit":
 		writeResp(c, Response{OK: true})
 		s.requestQuit()

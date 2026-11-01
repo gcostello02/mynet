@@ -11,17 +11,19 @@ import (
 	"time"
 )
 
-const sessionTokenTTL = 24 * time.Hour
+// SessionTokenTTL is the device bearer token lifetime (stateless HMAC JWT-style).
+var SessionTokenTTL = 24 * time.Hour
 
 type sessionClaims struct {
 	DeviceID  string `json:"device_id"`
 	ExpiresAt int64  `json:"exp"`
+	AuthEpoch int    `json:"auth_epoch"`
 }
 
 // issueSessionToken creates an HMAC-signed opaque bearer token.
-func issueSessionToken(deviceID string, serverSecret []byte) (string, time.Time, error) {
-	exp := time.Now().UTC().Add(sessionTokenTTL)
-	claims := sessionClaims{DeviceID: deviceID, ExpiresAt: exp.Unix()}
+func issueSessionToken(deviceID string, authEpoch int, serverSecret []byte) (string, time.Time, error) {
+	exp := time.Now().UTC().Add(SessionTokenTTL)
+	claims := sessionClaims{DeviceID: deviceID, ExpiresAt: exp.Unix(), AuthEpoch: authEpoch}
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		return "", time.Time{}, err
@@ -33,11 +35,10 @@ func issueSessionToken(deviceID string, serverSecret []byte) (string, time.Time,
 	return payloadB64 + "." + sig, exp, nil
 }
 
-// verifySessionToken validates token integrity and expiry.
-func verifySessionToken(token string, serverSecret []byte) (string, error) {
+func decodeSessionClaims(token string, serverSecret []byte) (sessionClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
-		return "", errors.New("invalid token format")
+		return sessionClaims{}, errors.New("invalid token format")
 	}
 	payloadB64, sigB64 := parts[0], parts[1]
 	mac := hmac.New(sha256.New, serverSecret)
@@ -45,24 +46,36 @@ func verifySessionToken(token string, serverSecret []byte) (string, error) {
 	expected := mac.Sum(nil)
 	sig, err := base64.RawURLEncoding.DecodeString(sigB64)
 	if err != nil {
-		return "", errors.New("invalid token signature encoding")
+		return sessionClaims{}, errors.New("invalid token signature encoding")
 	}
 	if !hmac.Equal(sig, expected) {
-		return "", errors.New("invalid token signature")
+		return sessionClaims{}, errors.New("invalid token signature")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(payloadB64)
 	if err != nil {
-		return "", errors.New("invalid token payload encoding")
+		return sessionClaims{}, errors.New("invalid token payload encoding")
 	}
 	var claims sessionClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return "", err
+		return sessionClaims{}, err
 	}
 	if time.Now().UTC().Unix() > claims.ExpiresAt {
-		return "", errors.New("token expired")
+		return sessionClaims{}, errors.New("token expired")
 	}
 	if claims.DeviceID == "" {
-		return "", errors.New("missing device id in token")
+		return sessionClaims{}, errors.New("missing device id in token")
+	}
+	return claims, nil
+}
+
+// verifySessionToken validates token integrity, expiry, and auth epoch.
+func verifySessionToken(token string, serverSecret []byte, currentEpoch int) (string, error) {
+	claims, err := decodeSessionClaims(token, serverSecret)
+	if err != nil {
+		return "", err
+	}
+	if claims.AuthEpoch != currentEpoch {
+		return "", errors.New("token revoked")
 	}
 	return claims.DeviceID, nil
 }
@@ -70,6 +83,17 @@ func verifySessionToken(token string, serverSecret []byte) (string, error) {
 func hashEnrollmentSecret(secret string) string {
 	sum := sha256.Sum256([]byte("mynet-enrollment-v1\n" + secret))
 	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+func constantTimeStringEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var v byte
+	for i := 0; i < len(a); i++ {
+		v |= a[i] ^ b[i]
+	}
+	return v == 0
 }
 
 func constantTimeSecretMatch(gotHash, wantHash string) bool {

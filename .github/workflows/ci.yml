@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+      - name: Install and build admin UI
+        run: cd web/admin && npm ci && npm run typecheck && npm test && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-dist
+          path: internal/dashboard/dist
+
+  test:
+    runs-on: ubuntu-latest
+    needs: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-dist
+          path: internal/dashboard/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Unit tests
+        run: go test ./... -count=1
+      - name: Race tests
+        run: go test -race ./... -count=1
+
+  linux-cross-compile:
+    runs-on: ubuntu-latest
+    needs: dashboard
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashboard-dist
+          path: internal/dashboard/dist
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build mynet (linux/${{ matrix.goarch }})
+        run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o /tmp/mynet ./cmd/mynet
+      - name: Build mynet-server (linux/${{ matrix.goarch }})
+        run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o /tmp/mynet-server ./cmd/mynet-server
+      - name: Linux netprobe tests
+        run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go test ./internal/netprobe -count=1

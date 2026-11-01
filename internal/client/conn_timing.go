@@ -166,6 +166,15 @@ func (ct *connTiming) markExisting(peer, sessionID string, stage ConnStage) {
 		ct.mu.Unlock()
 		return
 	}
+	if pt.Current.StartedAt.IsZero() {
+		// Post-ICE marks (e.g. WireGuard) after a timing-cycle reset: new anchor, not time.Unix(0).
+		pt.Current.StartedAt = time.Now()
+		pt.Current.PeerName = peer
+		pt.Current.SessionID = sessionID
+		if pt.Current.Stages == nil {
+			pt.Current.Stages = make(map[ConnStage]time.Duration)
+		}
+	}
 	elapsed := time.Since(pt.Current.StartedAt)
 	if pt.Current.Stages == nil {
 		pt.Current.Stages = make(map[ConnStage]time.Duration)
@@ -174,19 +183,54 @@ func (ct *connTiming) markExisting(peer, sessionID string, stage ConnStage) {
 	pt.Current.LastStage = stage
 	pt.Current.LastStageAt = elapsed
 	if stage == StageWireGuardHandshake || stage == StageVPNDataUsable {
-		if iceReady, ok := pt.Current.Stages[StageDataTransportReady]; ok {
+		if iceReady, ok := pt.Current.Stages[StageDataTransportReady]; ok && ConnStageDurationOK(iceReady) {
 			delta := elapsed - iceReady
 			if delta < 0 {
 				delta = 0
 			}
-			if stage == StageWireGuardHandshake {
-				pt.Current.Stages[StageICEToWireGuard] = delta
-			} else {
-				pt.Current.Stages[StageICEToVPNReady] = delta
+			if ConnStageDurationOK(delta) {
+				if stage == StageWireGuardHandshake {
+					pt.Current.Stages[StageICEToWireGuard] = delta
+				} else {
+					pt.Current.Stages[StageICEToVPNReady] = delta
+				}
 			}
 		}
 	}
 	ct.mu.Unlock()
+}
+
+func (ct *connTiming) snapshot(peer string) (PeerConnTiming, bool) {
+	ct.mu.Lock()
+	pt, ok := ct.peers[peer]
+	if !ok || pt == nil {
+		ct.mu.Unlock()
+		return PeerConnTiming{}, false
+	}
+	out := *pt
+	out.Current = sanitizeTimingSnapshot(out.Current)
+	out.LastSuccess = sanitizeTimingSnapshot(out.LastSuccess)
+	out.LastFailure = sanitizeTimingSnapshot(out.LastFailure)
+	ct.mu.Unlock()
+	return out, true
+}
+
+func sanitizeTimingSnapshot(s ConnTimingSnapshot) ConnTimingSnapshot {
+	if len(s.Stages) == 0 {
+		return s
+	}
+	clean := make(map[ConnStage]time.Duration, len(s.Stages))
+	for k, v := range s.Stages {
+		if ConnStageDurationOK(v) {
+			clean[k] = v
+		}
+	}
+	s.Stages = clean
+	if s.LastStageAt != 0 && !ConnStageDurationOK(s.LastStageAt) {
+		s.LastStageAt = 0
+		s.LastStage = ""
+	}
+	return s
 }
 
 // ConnStageOrder returns stages in typical establishment order for display.
@@ -210,14 +254,3 @@ func ConnStageOrder() []ConnStage {
 	}
 }
 
-func (ct *connTiming) snapshot(peer string) (PeerConnTiming, bool) {
-	ct.mu.Lock()
-	pt, ok := ct.peers[peer]
-	if !ok || pt == nil {
-		ct.mu.Unlock()
-		return PeerConnTiming{}, false
-	}
-	out := *pt
-	ct.mu.Unlock()
-	return out, true
-}

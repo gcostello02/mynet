@@ -220,8 +220,9 @@ func decodeAPIError(resp *http.Response) error {
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	_ = json.Unmarshal(data, &buf)
-	if buf.Error != "" {
-		return fmt.Errorf("%s (http %d)", buf.Error, resp.StatusCode)
+	msg := buf.Error
+	if msg == "" {
+		msg = "request failed"
 	}
-	return fmt.Errorf("http %d", resp.StatusCode)
+	return &APIError{Status: resp.StatusCode, Message: msg}
 }

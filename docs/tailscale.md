@@ -14,7 +14,7 @@ When you are **off the home LAN** but both machines are on the same tailnet, use
    cd ~/mynet && source env.sh && ./mynet login --stay
    ```
 
-2. On your Mac, point at the mini PC’s **Tailscale IP** (not `10.0.0.50`):
+2. On your Mac, point at the mini PC’s **Tailscale IP** (not `192.0.2.10`):
 
    ```bash
    mynet config tailnet --server http://<minipc-tailscale-ip>:8787

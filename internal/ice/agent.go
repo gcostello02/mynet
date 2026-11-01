@@ -232,6 +232,17 @@ func StateTerminal(st ConnectionState) bool {
 	}
 }
 
+// StateVPNTransportTerminal reports ICE states that should tear down a VPN WireGuard transport.
+// Disconnected is omitted: Pion may signal it while the nominated pair still carries WG traffic.
+func StateVPNTransportTerminal(st ConnectionState) bool {
+	switch st {
+	case ice.ConnectionStateFailed, ice.ConnectionStateClosed:
+		return true
+	default:
+		return false
+	}
+}
+
 func buildPathInfo(conn *ice.Conn) PathInfo {
 	local := conn.LocalAddr()
 	remote := conn.RemoteAddr()
