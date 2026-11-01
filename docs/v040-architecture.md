@@ -113,7 +113,7 @@ There is **no separate admin user** — enrolled devices are peers with equal AP
 - `mynet-server` often on mini PC; **separate process** from `mynet-daemon`.
 - Cloudflare Tunnel documented for **HTTPS/WSS only** — not UDP TURN (`docs/deployment-options.md`).
 - coturn optional (`deploy/coturn/`).
-- Enrollment secret manually distributed; documented in `deploy/minipc-server-start.md`.
+- Enrollment secret manually distributed (see `deploy/coordinator/README.md`).
 
 ## Architectural constraints for V0.4
 

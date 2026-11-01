@@ -59,7 +59,7 @@ State: bootstrap secret and invitation token live **only in component memory** (
 
 - `deploy/coordinator/Dockerfile` + `docker-compose.yml` — coordinator-only image (not staging client entrypoint), persistent volume, localhost bind, healthcheck
 - `deploy/coordinator/.env.example` — secrets, STUN/TURN, secure cookies
-- `deploy/coordinator/README.md` — backup, upgrade, HTTPS expectations (`deploy/self-hosted/` is a compatibility alias)
+- `deploy/coordinator/README.md` — backup, upgrade, HTTPS expectations
 
 Admin is not intentionally exposed on `0.0.0.0` in the example compose file; operators front with HTTPS reverse proxy.
 

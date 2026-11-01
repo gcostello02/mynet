@@ -113,10 +113,6 @@ docker compose exec coordinator tar -czf - -C /data . > backup.tar.gz
 
 Back up `coordinator.db` and `coordinator.ed25519` together.
 
-## Mini PC migration (V0.3 → V0.4)
-
-If you previously ran native `mynet-server` on `:8787` with `devices.db`, read [deploy/coordinator/minipc.md](deploy/coordinator/minipc.md) for inspection commands, backups, port/tunnel changes, and re-enrollment.
-
 ## Troubleshooting
 
 | Issue | What to check |
@@ -142,8 +138,6 @@ Go 1.22+ (toolchain may auto-download). VPN: IPv4, per-peer `/32` routes — see
 
 Multi-container acceptance and CI images: [deploy/staging](deploy/staging/) and [docs/m040-m2-staging.md](docs/m040-m2-staging.md). Not required for production coordinator install.
 
-`deploy/self-hosted/` is a compatibility alias for `deploy/coordinator/`.
-
 ## Documentation index
 
 - [docs/v040-architecture.md](docs/v040-architecture.md) — V0.4 design
@@ -153,4 +147,4 @@ Multi-container acceptance and CI images: [deploy/staging](deploy/staging/) and 
 
 ## License
 
-TBD — add a license file before public release.
+[MIT](LICENSE) © 2026 Grant Costello. You may use, modify and redistribute MyNet, provided the copyright notice and license text are kept in copies.

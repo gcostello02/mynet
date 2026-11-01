@@ -16,7 +16,7 @@ Isolated **self-hosted** validation for WireGuard, ICE, enrollment, recovery, an
 
 ### Mini PC / production
 
-Repository docs (`deploy/minipc-server-start.md`) describe the **production** coordinator on the home mini PC (`~/mynet`, `mesh.example.com`, VPN pool `172.31.240.0/20`). **This harness does not SSH to or modify that host.** No remote inspection was performed in automation; treat the mini PC as production unless you verify otherwise locally.
+Treat any coordinator you run for real use as production. **This harness does not SSH to or modify that host.** No remote inspection was performed in automation; treat the mini PC as production unless you verify otherwise locally.
 
 ## Isolation model
 

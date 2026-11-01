@@ -98,10 +98,6 @@ Identity and DB persist across rebuilds.
 ./scripts/smoke-test.sh
 ```
 
-## Mini PC (coordinator + Linux edge)
-
-See [minipc.md](minipc.md) for inspecting an existing V0.3 install and migrating to this stack.
-
 ## Developer staging
 
 CI and multi-container acceptance tests use [deploy/staging](../staging/) — not required for production install.
