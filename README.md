@@ -14,7 +14,7 @@
 MyNet connects your machines into a private network using **WireGuard** tunnels negotiated peer-to-peer over **ICE** (STUN/TURN), so devices behind home routers reach each other directly — on the LAN, across the internet, or through a relay when NAT gets in the way. A small **coordinator** you host handles enrollment and signaling; it never sees your traffic.
 
 <p align="center">
-  <img src="docs/screenshots/m3-redesign/dev.png" alt="MyNet admin dashboard — devices" width="760">
+  <img src="docs/images/dashboard-devices.png" alt="MyNet admin dashboard — devices" width="760">
 </p>
 
 ## Highlights
@@ -37,7 +37,7 @@ MyNet connects your machines into a private network using **WireGuard** tunnels 
           ┌─────────────────────────┼─────────────────────────┐
           │                         │                         │
    ┌──────┴──────┐           ┌──────┴──────┐           ┌──────┴──────┐
-   │  Laptop     │◄─────────►│  Mini PC    │◄─────────►│  Desktop    │
+   │  Laptop     │◄─────────►│  Server     │◄─────────►│  Desktop    │
    │ 172.31.240.2│ WireGuard │ 172.31.240.1│ WireGuard │ 172.31.240.3│
    └─────────────┘  over ICE └─────────────┘  over ICE └─────────────┘
                      (direct P2P, TURN fallback)
@@ -103,7 +103,7 @@ sudo mynet up
 mynet status
 ```
 
-Check what's already there first with `ls ~/.mynet` and `mynet service status` — don't install a second service over an existing one. More detail: [docs/v040-m2-join.md](docs/v040-m2-join.md).
+Check what's already there first with `ls ~/.mynet` and `mynet service status` — don't install a second service over an existing one. More detail: [docs/joining-devices.md](docs/joining-devices.md).
 
 ```text
 $ mynet status
@@ -151,8 +151,8 @@ Run `mynet` with no arguments for the full list.
   cd deploy/coordinator
   docker compose exec coordinator tar -czf - -C /data . > backup.tar.gz
   ```
-- **Using Tailscale too?** MyNet doesn't modify it. See [docs/tailscale.md](docs/tailscale.md) and [docs/independent-connectivity.md](docs/independent-connectivity.md).
-- **Strict NAT or CGNAT?** Run a TURN relay — [docs/turn.md](docs/turn.md), [deploy/coturn](deploy/coturn).
+- **Using Tailscale too?** MyNet doesn't modify it. See [docs/networking.md](docs/networking.md#using-tailscale-alongside-mynet).
+- **Strict NAT or CGNAT?** Run a TURN relay — [docs/networking.md](docs/networking.md#turn-relay-optional), [deploy/coturn](deploy/coturn).
 
 ## Troubleshooting
 
@@ -164,7 +164,7 @@ Run `mynet` with no arguments for the full list.
 | Peers stuck on "Connecting" | `mynet diagnose`; STUN/TURN settings in `.env`; UDP not blocked by a firewall |
 | Locked out of admin | Restore a DB backup — there is no cloud recovery |
 
-More: [docs/vpn-troubleshooting.md](docs/vpn-troubleshooting.md) · [docs/connection-diagnostics.md](docs/connection-diagnostics.md) · [docs/m1-coordinator-admin.md](docs/m1-coordinator-admin.md)
+More: [docs/operations.md](docs/operations.md) · [docs/networking.md](docs/networking.md)
 
 ## Build from source
 
@@ -176,19 +176,21 @@ make build-dashboard  # rebuild the embedded admin UI (optional; a build is comm
 make test             # go test ./... -race
 ```
 
-The VPN is IPv4-only with per-peer `/32` routes — see [docs/vpn-setup.md](docs/vpn-setup.md).
+The VPN is IPv4-only with per-peer `/32` routes — see [docs/architecture.md](docs/architecture.md).
 
 ## Documentation
 
-| Topic | Docs |
-|-------|------|
-| Architecture & design | [v040-architecture](docs/v040-architecture.md) · [wireguard-design](docs/wireguard-design.md) · [protocol](docs/protocol.md) |
-| Security | [v040-security-model](docs/v040-security-model.md) · [vpn-security](docs/vpn-security.md) |
-| Dashboard | [v040-m3-dashboard](docs/v040-m3-dashboard.md) · [first-run setup](docs/v040-m3-first-run-setup.md) |
-| Operating | [vpn-setup](docs/vpn-setup.md) · [daemon-lifecycle](docs/daemon-lifecycle.md) · [deployment-options](docs/deployment-options.md) |
-| Testing | [testing](docs/testing.md) · [vpn-testing](docs/vpn-testing.md) · [staging harness](docs/m040-m2-staging.md) |
+| I want to… | Read |
+|------------|------|
+| Set up the admin account, use the dashboard | [docs/dashboard.md](docs/dashboard.md) |
+| Add a device | [docs/joining-devices.md](docs/joining-devices.md) |
+| Run, monitor and fix devices | [docs/operations.md](docs/operations.md) |
+| Handle NAT, firewalls, TURN, Tailscale | [docs/networking.md](docs/networking.md) |
+| Understand how it works | [docs/architecture.md](docs/architecture.md) |
+| Understand the security model | [docs/security.md](docs/security.md) |
+| Run tests or the staging harness | [docs/testing.md](docs/testing.md) · [docs/staging.md](docs/staging.md) |
 
-The multi-container acceptance harness lives in [deploy/staging](deploy/staging/) and isn't needed for a normal install.
+The full index is [docs/README.md](docs/README.md). The multi-container acceptance harness lives in [deploy/staging](deploy/staging/) and isn't needed for a normal install.
 
 ## License
 

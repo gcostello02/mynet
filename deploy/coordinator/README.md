@@ -48,7 +48,7 @@ The browser setup wizard at `/` is optional.
 
 ```bash
 mynet admin login --server https://mesh.example.com --user admin
-mynet admin invitations create --label minipc --max-uses 1
+mynet admin invitations create --label laptop --max-uses 1
 ```
 
 Open `https://mesh.example.com/` in a browser to use the dashboard (after login).

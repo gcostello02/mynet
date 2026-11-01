@@ -41,7 +41,7 @@ Snapshot files written via IPC land in `$STATE/profiles/` (mode `0700`).
 
 ## Capture a 30s CPU profile during iperf3
 
-On the **machine running mynetd** (e.g. mini PC receiving traffic):
+On the **machine running mynetd** (for example, a device receiving traffic):
 
 **Terminal 1 — start iperf3 server on the VPN IP**
 
@@ -53,7 +53,7 @@ iperf3 -s -B 172.31.240.2
 
 ```bash
 # Option A: CLI via daemon IPC (blocks ~30s)
-iperf3 -c 172.31.240.2 -t 35 -P 4 &   # MacBook → mini
+iperf3 -c 172.31.240.2 -t 35 -P 4 &   # run from another MyNet device
 mynet profile cpu --seconds 30 -o /tmp/mynet-cpu.prof
 
 # Option B: curl over Unix socket (same host as daemon)
@@ -66,7 +66,7 @@ go tool pprof -proto \
   "http+unix://$HOME/.mynet/pprof.sock/debug/pprof/profile?seconds=30"
 ```
 
-Repeat on **MacBook** if you need the send-side profile (`iperf3 -R` or reverse direction).
+Repeat on the other device if you need the send-side profile (`iperf3 -R` or the reverse direction).
 
 ### Other profiles
 
@@ -103,20 +103,12 @@ What to look for (MyNet userspace VPN stack):
 
 Compare **flat** vs **cum** CPU; a single hot goroutine at ~70–80% of one core often shows up as one stack rooted in `device.(*Device).RoutineEncryption` / `RoutineDecryption` or TUN read loops.
 
-## Code-level suspects (inspection, not yet optimized)
+## Interpreting results
 
-From the current architecture (`d341175` baseline):
-
-1. **Userspace WireGuard** — all encrypt/decrypt runs in-process (not kernel WG); at ~150–260 Mbps this commonly saturates **one core** before the link.
-2. **`ICEBind.readLoop`** — allocates a new slice per inbound datagram (`append([]byte(nil), buf[:n]...)`) before handing to wireguard-go.
-3. **Single peer read loop** — one goroutine per peer reads ICE and feeds WG; no batching (`BatchSize() == 1`).
-4. **Pion ICE** — extra userspace UDP encapsulation on top of kernel UDP.
-5. **Asymmetric Mbps (Mac→mini ~150 vs mini→Mac ~264)** — investigate direction-specific stacks in profiles (encrypt vs decrypt, TUN read vs write paths).
-
-Use profiles to confirm which of these dominates on **your** hardware before changing the data path.
+MyNet runs WireGuard in userspace, so on fast links encryption and decryption commonly saturate one core before the link does. Use profiles to find where time goes on **your** hardware before changing the data path.
 
 ## Security
 
 - Profiling endpoints reveal goroutine stacks and memory layout, not WireGuard private keys or plaintext payloads.
 - Do not enable `MYNET_ENABLE_PPROF` on production hosts exposed to untrusted local users.
-- Coordination server (`mynet-server`) is unchanged; profiling is **daemon-only**.
+- The coordinator (`mynet-server`) is unaffected; profiling is **daemon-only**.

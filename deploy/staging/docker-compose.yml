@@ -1,4 +1,4 @@
-# Isolated M2 real-network staging. Does not touch production mesh or Tailscale.
+# Isolated real-network staging. Does not touch any real coordinator, mesh or Tailscale.
 # Operator must review and run: deploy/staging/scripts/run-acceptance.sh
 name: mynet-m2-staging
 

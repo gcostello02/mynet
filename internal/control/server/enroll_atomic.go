@@ -7,7 +7,7 @@ import (
 )
 
 // EnrollDeviceWithInvitationAtomic redeems the invitation and inserts the device in one DB transaction.
-// In-memory-only stores (no sqlDB) use a single store mutex; see docs/m1-coordinator-admin.md.
+// In-memory-only stores (no sqlDB) use a single store mutex; production uses SQLite.
 func (s *Store) EnrollDeviceWithInvitationAtomic(plaintextToken string, rec *DeviceRecord) error {
 	if rec == nil || rec.Revoked {
 		return errRevoked

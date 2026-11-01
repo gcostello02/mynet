@@ -1,6 +1,6 @@
-# M2 real-network staging harness
+# Real-network staging harness
 
-Isolated **self-hosted** validation for WireGuard, ICE, enrollment, recovery, and revocation. **Never** targets `mesh.example.com`, production `devices.db`, or live client state.
+Isolated, Docker-based validation of real WireGuard, ICE, enrollment, recovery and revocation with a coordinator and three clients. It never touches your real coordinator, database or client state. You don't need it to run MyNet; it's for developers and CI.
 
 ## Prerequisites
 
@@ -12,21 +12,21 @@ Isolated **self-hosted** validation for WireGuard, ICE, enrollment, recovery, an
 | **Privileges (reviewed by operator)** | Client containers use `privileged: true`, `CAP_NET_ADMIN`, `/dev/net/tun` |
 | Disk | ~2 GB for images + volumes |
 
-**Not required:** Tailscale, Cloudflare Tunnel, production mini PC access, root on the host (only inside containers).
+**Not required:** Tailscale, Cloudflare Tunnel, access to any real deployment, root on the host (only inside containers).
 
-### Mini PC / production
+### Your real deployment
 
-Treat any coordinator you run for real use as production. **This harness does not SSH to or modify that host.** No remote inspection was performed in automation; treat the mini PC as production unless you verify otherwise locally.
+This harness never connects to or modifies any real coordinator or device. Run it on a disposable machine.
 
 ## Isolation model
 
-| Boundary | Staging value | Production (untouched) |
+| Boundary | Staging value | Real deployment (untouched) |
 |----------|---------------|-------------------------|
-| Docker bridge | `10.200.0.0/24` | LAN / Tailscale |
-| VPN pool | `10.88.0.0/24` (`MYNET_VPN_CIDR`) | `172.31.240.0/20` |
-| Coordinator URL | `https://staging-coord.mynet.test` (port `127.0.0.1:18443` on host) | `https://mesh.example.com` |
-| TLS trust | Local staging CA (`deploy/staging/certs/ca.crt`) | Public PKI / Cloudflare |
-| State | Compose volumes `client-*-state`, `coord-data` | `~/.mynet`, `~/mynet/devices.db` |
+| Docker bridge | `10.200.0.0/24` | your LAN |
+| VPN pool | `10.88.0.0/24` (`MYNET_VPN_CIDR`) | `172.31.240.0/20` (default) |
+| Coordinator URL | `https://staging-coord.mynet.test` (port `127.0.0.1:18443` on host) | your own HTTPS URL |
+| TLS trust | Local staging CA (`deploy/staging/certs/ca.crt`) | Public PKI |
+| State | Compose volumes `client-*-state`, `coord-data` | `~/.mynet` and your coordinator's data volume |
 
 Host default routes, `systemd`/`launchd`, and production WireGuard interfaces are **not** modified. Staging binds HTTPS to **localhost only** (`127.0.0.1:18443`).
 
@@ -117,7 +117,7 @@ Partial failure: see `artifacts/last-error.txt` after a failed `run-acceptance.s
 - **Not simulated:** Enrollment proof v2 and join against HTTPS with staging CA (not `AllowInsecureHTTPForTest`).
 - **STUN:** Uses public `stun.l.google.com` for reflexive candidates; optional TURN not provisioned by default.
 - **Revocation delay:** Daemon polls VPN config every 45s; measured delay may be **less** if auth refresh or ICE events occur earlier.
-- **Offline peers:** Cannot shrink WG state without coordinator reachability (see `docs/m2-revocation-contract.md`).
+- **Offline peers:** Cannot shrink WG state without coordinator reachability (see [architecture.md](architecture.md#limits)).
 - **macOS host:** Run acceptance via Docker; do not expect native `mynet up` on Darwin for this harness.
 
 ## Go unit tests

@@ -3,78 +3,43 @@
 ## Automated
 
 ```bash
-make test
+make test            # go test ./... -race -count=1
 ```
 
-Includes:
+The suite needs no network, root or real NAT. It covers:
 
-- Identity persistence and signing
-- Server enroll/auth/peer ACLs
-- Local ICE pair ping (no external network)
-- Full stack: HTTP server + two WebSocket clients + ICE + UDP ping
+- Identity persistence and signing, invitation parsing and verification
+- Coordinator enrollment, auth, admin API, setup and bootstrap, rate limits, revocation, and SQLite migrations
+- VPN address allocation, WireGuard engine construction, and the `ICEBind` datagram relay
+- Local ICE pairs and the full stack of HTTP server, WebSocket clients, ICE and WireGuard
+- Daemon lifecycle, supervised service layout, and upgrade safety checks
+- Dashboard handler (security headers, SPA routing)
 
-Race detector enabled via `make test`.
+STUN isn't contacted in unit tests. A few timing-sensitive tests in `internal/wgbind` can flake when the whole suite runs in parallel under `-race` on a busy machine; rerun the package on its own (`go test ./internal/wgbind -race -count=1`) before treating a failure as real.
 
-External STUN is **not** required for CI tests (`stun_urls` empty in ICE unit tests).
+Dashboard tests:
 
-## Same-LAN manual test (MacBook + mini PC)
-
-1. Run `mynet-server` on a host both devices can reach (LAN IP or laptop).
-2. Set the same `MYNET_SERVER_SECRET` and `MYNET_ENROLLMENT_SECRET`.
-3. `mynet init` / `mynet login` on both; keep `mynet login` running or re-run before connect so WebSocket stays up.
-4. On initiator: `mynet connect --peer <other>` then `mynet ping`.
-5. Expect `mynet status` to show `host` and private LAN addresses on both sides.
-
-## Independent connectivity (V0.1.1)
-
-See [independent-connectivity.md](independent-connectivity.md), [deployment-options.md](deployment-options.md), and [turn-testing.md](turn-testing.md). Requires a **publicly reachable** coordination URL (not Tailscale-only).
-
-## Tailnet test (off-LAN, both on Tailscale)
-
-Use this while Tailscale is still carrying control traffic; MyNet validates P2P over `100.x` host candidates.
-
-1. Mini PC: `mynet-server` on `:8787` and `mynet login --stay`.
-2. Mac (not on home LAN): `mynet config tailnet --server http://<minipc-100.x>:8787`, then `mynet login`.
-3. `mynet connect --peer minipc` — expect `host` with `100.x` local/remote addresses.
-4. See [tailscale.md](tailscale.md) for config fields (`allow_tailscale_candidates`, `turn_urls`).
-
-## Hotspot / cross-network test
-
-1. Put MacBook on phone hotspot; mini PC stays on home LAN.
-2. Server must be reachable from both (public VPS, or server on mini PC with port forward — only if you explicitly choose to expose it).
-3. Configure STUN in `~/.mynet/config.json` if defaults are blocked.
-4. Success indicator: nominated pair includes `server-reflexive (STUN)` and reflexive/public IPs, with working `mynet ping`.
-5. Symmetric NAT or UDP-blocking Wi‑Fi may fail until TURN is implemented — document failure mode (ICE failed / timeout).
-
-## How to identify direct paths
-
-| Observation | Meaning |
-|-------------|---------|
-| Local/remote addrs are RFC1918 on same subnet | Likely true LAN path |
-| Candidate type `server-reflexive (STUN)` | STUN learned public/reflexive endpoint; may still be direct P2P |
-| Server logs show only WS traffic | Good — no app payload relay |
-| tcpdump on server during ping shows no peer UDP | Good |
-| tcpdump on peer shows UDP between peer IPs | Confirms direct data path |
-
-## Expected logs
-
-Server:
-
-```text
-INFO device online device_id=...
-INFO device offline device_id=...
+```bash
+cd web/admin && npm ci && npm run typecheck && npm test
 ```
 
-Client: errors on stderr; `mynet status` for state.
+CI (`.github/workflows/ci.yml`) builds and tests the dashboard, runs the Go tests with and without `-race`, and cross-compiles `mynet` and `mynet-server` for linux/amd64 and linux/arm64.
 
-## Troubleshooting
+## Manual checks on real devices
 
-| Symptom | Likely cause |
-|---------|----------------|
-| `enrollment denied` | Wrong `MYNET_ENROLLMENT_SECRET` |
-| `invalid token` | Re-run `mynet login` |
-| Peer offline | Peer needs active WebSocket (`mynet login`) |
-| ICE timeout | NAT/firewall, missing STUN, or peer offline |
-| Ping fails but status Connected | App read loop / framing (check both sides connected) |
+These need root for the TUN device and routes, so they aren't part of CI.
 
-Distinguish **authorization** (401/403 on REST) from **signaling** (WS relay / session_ready missing) from **ICE** (`ICE failed` in CLI) from **NAT** (use TURN + `--relay-only` to validate relay path).
+1. Enroll two or more devices ([joining-devices.md](joining-devices.md)) and start the VPN on each (`sudo mynet service start`).
+2. `mynet status` on each: `WireGuard: Active`, every peer `Connected` with `Transport ready`.
+3. `ping <peer MyNet IP>` in both directions, then `ssh user@<peer MyNet IP>`.
+4. **Cross-network:** put one device on a phone hotspot and repeat. Expect a `Direct P2P` path via STUN, or `Relayed (TURN)` if you've set up a relay.
+5. **Relay:** `mynet connect --peer <name> --relay-only` should report `TURN Used: true`, or fail clearly when TURN is unreachable ([networking.md](networking.md#testing-the-relay)).
+6. **Recovery:** reboot a device (the VPN should return on its own), restart the coordinator (devices should reconnect), and revoke a device (peers drop it within about 45 s).
+
+## Staging harness
+
+For end-to-end validation of real ICE, WireGuard, recovery, revocation and invitation replay in isolated containers, see [staging.md](staging.md).
+
+## Profiling
+
+See [profiling.md](profiling.md). It's opt-in and meant for development only.
