@@ -2,44 +2,63 @@ name: CI
 
 on:
   push:
-    branches: [main, "feature/**"]
+    branches: [main]
   pull_request:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs for the same branch or PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   dashboard:
+    name: dashboard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/admin/package-lock.json
-      - name: Install and build admin UI
+      - name: Install, typecheck, test and build the admin UI
         run: cd web/admin && npm ci && npm run typecheck && npm test && npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dashboard-dist
           path: internal/dashboard/dist
 
-  test:
+  go:
+    name: go (fmt, vet, test)
     runs-on: ubuntu-latest
     needs: dashboard
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: dashboard-dist
           path: internal/dashboard/dist
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Unit tests
-        run: go test ./... -count=1
-      - name: Race tests
-        run: go test -race ./... -count=1
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l cmd internal)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt (run 'make fmt'):"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: Tests (race detector)
+        run: go test ./... -race -count=1
 
   linux-cross-compile:
+    name: linux-cross-compile (${{ matrix.goarch }})
     runs-on: ubuntu-latest
     needs: dashboard
     strategy:
@@ -47,12 +66,12 @@ jobs:
       matrix:
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: dashboard-dist
           path: internal/dashboard/dist
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Build mynet (linux/${{ matrix.goarch }})

@@ -23,7 +23,7 @@ Dashboard tests:
 cd web/admin && npm ci && npm run typecheck && npm test
 ```
 
-CI (`.github/workflows/ci.yml`) builds and tests the dashboard, runs the Go tests with and without `-race`, and cross-compiles `mynet` and `mynet-server` for linux/amd64 and linux/arm64.
+CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests. It typechecks, tests and builds the dashboard; checks `gofmt` and `go vet`; runs the Go tests with the race detector; and cross-compiles `mynet` and `mynet-server` for linux/amd64 and linux/arm64 (running the Linux-only `netprobe` tests natively on amd64). Run `make fmt` before pushing if the formatting check fails.
 
 ## Manual checks on real devices
 
