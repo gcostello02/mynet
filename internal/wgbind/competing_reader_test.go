@@ -105,4 +105,3 @@ func encryptedPingOverBinds(t *testing.T, bind0, bind1 *ICEBind, ip0, ip1 netip.
 		return false
 	}
 }
-

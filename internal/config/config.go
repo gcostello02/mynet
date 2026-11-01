@@ -18,12 +18,12 @@ func DefaultStateDir() string {
 
 // ClientConfig holds client-side settings (no secrets beyond paths).
 type ClientConfig struct {
-	ServerURL string   `json:"server_url"`
-	NetworkID string   `json:"network_id,omitempty"`
-	CoordinatorFingerprint string `json:"coordinator_fingerprint,omitempty"`
-	CoordinatorPublicKey   string `json:"coordinator_public_key,omitempty"`
-	STUNURLs  []string `json:"stun_urls"`
-	TURNURLs  []string `json:"turn_urls"`
+	ServerURL              string   `json:"server_url"`
+	NetworkID              string   `json:"network_id,omitempty"`
+	CoordinatorFingerprint string   `json:"coordinator_fingerprint,omitempty"`
+	CoordinatorPublicKey   string   `json:"coordinator_public_key,omitempty"`
+	STUNURLs               []string `json:"stun_urls"`
+	TURNURLs               []string `json:"turn_urls"`
 	// ICEURLs, if non-empty, replaces the combined stun_urls + turn_urls list.
 	ICEURLs                  []string      `json:"ice_urls,omitempty"`
 	AllowTailscaleCandidates bool          `json:"allow_tailscale_candidates,omitempty"`

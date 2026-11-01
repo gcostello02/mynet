@@ -29,11 +29,11 @@ func (s *Server) handleNetworkPublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"network_id":               s.store.NetworkID(),
-		"coordinator_public_key":   meta.CoordinatorPublicKeyB64,
-		"coordinator_fingerprint":  meta.CoordinatorFingerprint,
-		"public_server_url":        meta.PublicServerURL,
-		"network_display_name":     meta.DisplayName,
+		"network_id":              s.store.NetworkID(),
+		"coordinator_public_key":  meta.CoordinatorPublicKeyB64,
+		"coordinator_fingerprint": meta.CoordinatorFingerprint,
+		"public_server_url":       meta.PublicServerURL,
+		"network_display_name":    meta.DisplayName,
 	})
 }
 
@@ -235,13 +235,13 @@ func (s *Server) handleAdminListDevices(w http.ResponseWriter, r *http.Request) 
 	out := make([]map[string]any, 0, len(devs))
 	for _, d := range devs {
 		out = append(out, map[string]any{
-			"device_id":         d.DeviceID,
-			"name":              d.Name,
-			"vpn_ipv4":          d.VPNIPv4,
-			"revoked":           d.Revoked,
-			"signaling_online":  s.hub.IsOnline(d.DeviceID),
-			"enrolled_at":       d.Enrolled.Format(time.RFC3339),
-			"auth_epoch":        d.AuthEpoch,
+			"device_id":        d.DeviceID,
+			"name":             d.Name,
+			"vpn_ipv4":         d.VPNIPv4,
+			"revoked":          d.Revoked,
+			"signaling_online": s.hub.IsOnline(d.DeviceID),
+			"enrolled_at":      d.Enrolled.Format(time.RFC3339),
+			"auth_epoch":       d.AuthEpoch,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

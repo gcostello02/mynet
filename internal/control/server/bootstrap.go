@@ -14,8 +14,8 @@ const (
 	bootstrapTokenHeader = "X-Mynet-Bootstrap-Token"
 	bootstrapTTL         = 2 * time.Hour
 
-	metaBootstrapTokenHash   = "bootstrap_token_hash"
-	metaBootstrapExpiresAt   = "bootstrap_expires_at"
+	metaBootstrapTokenHash = "bootstrap_token_hash"
+	metaBootstrapExpiresAt = "bootstrap_expires_at"
 )
 
 // bootstrapSlot holds the active one-time bootstrap capability (plaintext only in memory).
@@ -199,7 +199,7 @@ func (s *Server) handleSetupBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"bootstrap_token":    tok,
+		"bootstrap_token":      tok,
 		"bootstrap_expires_at": exp.UTC().Format(time.RFC3339),
 	})
 }

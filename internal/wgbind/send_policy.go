@@ -34,12 +34,12 @@ func isTerminalSendError(err error) bool {
 }
 
 type sendHealth struct {
-	mu                 sync.Mutex
-	consecutiveErrors  int
-	lastError          string
-	lastErrorAt        time.Time
-	lastSendOK         time.Time
-	lastRecvAt         time.Time
+	mu                sync.Mutex
+	consecutiveErrors int
+	lastError         string
+	lastErrorAt       time.Time
+	lastSendOK        time.Time
+	lastRecvAt        time.Time
 }
 
 func (h *sendHealth) recordSendOK() {

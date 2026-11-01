@@ -15,15 +15,15 @@ import (
 )
 
 const (
-	adminSessionTTL   = 12 * time.Hour
-	adminCookieName   = "mynet_admin_session"
-	adminCSRFCookie   = "mynet_csrf"
-	adminCSRFHeader   = "X-Mynet-CSRF"
-	setupTokenHeader  = "X-Mynet-Setup-Token"
-	argonTime    = 2
-	argonMemory  = 64 * 1024
-	argonThreads = 4
-	argonKeyLen  = 32
+	adminSessionTTL  = 12 * time.Hour
+	adminCookieName  = "mynet_admin_session"
+	adminCSRFCookie  = "mynet_csrf"
+	adminCSRFHeader  = "X-Mynet-CSRF"
+	setupTokenHeader = "X-Mynet-Setup-Token"
+	argonTime        = 2
+	argonMemory      = 64 * 1024
+	argonThreads     = 4
+	argonKeyLen      = 32
 )
 
 type AdminRecord struct {
@@ -34,10 +34,10 @@ type AdminRecord struct {
 }
 
 type AdminSession struct {
-	ID           string
-	AdminID      string
-	CSRFToken    string // plaintext for cookie; hash stored in DB
-	ExpiresAt    time.Time
+	ID        string
+	AdminID   string
+	CSRFToken string // plaintext for cookie; hash stored in DB
+	ExpiresAt time.Time
 }
 
 type adminSessionTable struct {

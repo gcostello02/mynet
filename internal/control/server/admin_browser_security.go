@@ -9,7 +9,6 @@ import (
 	"github.com/gcostello02/mynet/internal/control"
 )
 
-
 // adminRequire validates admin session; cookie-authenticated mutations need same-origin + CSRF.
 func (s *Server) adminRequire(w http.ResponseWriter, r *http.Request, mutating bool) (*AdminSession, bool) {
 	sess, ok := s.adminSessionFromRequest(r)

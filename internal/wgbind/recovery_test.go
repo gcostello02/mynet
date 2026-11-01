@@ -58,8 +58,8 @@ func (c *stallConn) Close() error {
 	return nil
 }
 
-func (c *stallConn) LocalAddr() net.Addr  { return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1} }
-func (c *stallConn) RemoteAddr() net.Addr { return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 2} }
+func (c *stallConn) LocalAddr() net.Addr                { return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1} }
+func (c *stallConn) RemoteAddr() net.Addr               { return &net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 2} }
 func (c *stallConn) SetDeadline(t time.Time) error      { return nil }
 func (c *stallConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *stallConn) SetWriteDeadline(t time.Time) error { return nil }

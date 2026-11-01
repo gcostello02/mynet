@@ -10,8 +10,8 @@ import (
 
 func TestHandlerDoesNotServeAPIPaths(t *testing.T) {
 	fs := fstest.MapFS{
-		"index.html":              {Data: []byte("<html>ok</html>")},
-		"assets/app.js":           {Data: []byte("console.log('x')")},
+		"index.html":    {Data: []byte("<html>ok</html>")},
+		"assets/app.js": {Data: []byte("console.log('x')")},
 	}
 	h := NewHandler(fs)
 	mux := http.NewServeMux()

@@ -9,21 +9,21 @@ import (
 type ConnStage string
 
 const (
-	StageSignalingReady       ConnStage = "signaling_ready"
-	StagePeerSessionCreated   ConnStage = "peer_session_created"
-	StageRemoteCredReceived   ConnStage = "remote_credentials_received"
-	StageGatherStarted        ConnStage = "gather_started"
-	StageGatherCompleted      ConnStage = "gather_completed"
-	StageRemoteCandidate      ConnStage = "remote_candidate"
-	StageICEConnectStarted    ConnStage = "ice_connect_started"
-	StageICEConnected         ConnStage = "ice_connected"
-	StageDataTransportReady   ConnStage = "data_transport_ready"
-	StageWireGuardHandshake   ConnStage = "wireguard_handshake"
-	StageVPNDataUsable        ConnStage = "vpn_data_usable"
-	StageICEToWireGuard       ConnStage = "ice_to_wireguard_handshake"
-	StageICEToVPNReady        ConnStage = "ice_to_vpn_data_usable"
-	StageRecoveryStarted      ConnStage = "recovery_started"
-	StageRecoveryCompleted    ConnStage = "recovery_completed"
+	StageSignalingReady     ConnStage = "signaling_ready"
+	StagePeerSessionCreated ConnStage = "peer_session_created"
+	StageRemoteCredReceived ConnStage = "remote_credentials_received"
+	StageGatherStarted      ConnStage = "gather_started"
+	StageGatherCompleted    ConnStage = "gather_completed"
+	StageRemoteCandidate    ConnStage = "remote_candidate"
+	StageICEConnectStarted  ConnStage = "ice_connect_started"
+	StageICEConnected       ConnStage = "ice_connected"
+	StageDataTransportReady ConnStage = "data_transport_ready"
+	StageWireGuardHandshake ConnStage = "wireguard_handshake"
+	StageVPNDataUsable      ConnStage = "vpn_data_usable"
+	StageICEToWireGuard     ConnStage = "ice_to_wireguard_handshake"
+	StageICEToVPNReady      ConnStage = "ice_to_vpn_data_usable"
+	StageRecoveryStarted    ConnStage = "recovery_started"
+	StageRecoveryCompleted  ConnStage = "recovery_completed"
 )
 
 // ConnTimingSnapshot is a single connection attempt timeline (durations from attempt start).
@@ -42,9 +42,9 @@ type ConnTimingSnapshot struct {
 
 // PeerConnTiming is the latest timing and error history for one VPN peer.
 type PeerConnTiming struct {
-	Current      ConnTimingSnapshot
-	LastSuccess  ConnTimingSnapshot
-	LastFailure  ConnTimingSnapshot
+	Current     ConnTimingSnapshot
+	LastSuccess ConnTimingSnapshot
+	LastFailure ConnTimingSnapshot
 }
 
 type connAttempt struct {
@@ -253,4 +253,3 @@ func ConnStageOrder() []ConnStage {
 		StageRecoveryCompleted,
 	}
 }
-

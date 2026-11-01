@@ -16,12 +16,12 @@ var AllowHTTPForTest bool
 
 // Invite is an administrator-issued credential for joining a network (protect like a password).
 type Invite struct {
-	Version                 int    `json:"v"`
-	ServerURL               string `json:"server_url"`
-	NetworkID               string `json:"network_id"`
-	CoordinatorFingerprint  string `json:"coordinator_fingerprint"`
-	CoordinatorPublicKey    string `json:"coordinator_public_key,omitempty"`
-	EnrollmentToken         string `json:"enrollment_token"`
+	Version                int    `json:"v"`
+	ServerURL              string `json:"server_url"`
+	NetworkID              string `json:"network_id"`
+	CoordinatorFingerprint string `json:"coordinator_fingerprint"`
+	CoordinatorPublicKey   string `json:"coordinator_public_key,omitempty"`
+	EnrollmentToken        string `json:"enrollment_token"`
 }
 
 func (inv *Invite) Validate() error {

@@ -13,9 +13,9 @@ import (
 const coordinatorKeyFile = "coordinator.ed25519"
 
 var (
-	errCoordinatorKeyMissing   = errors.New("coordinator private key file missing")
-	errCoordinatorKeyCorrupt   = errors.New("coordinator private key file corrupt")
-	errCoordinatorKeyMismatch  = errors.New("coordinator private key does not match database public key")
+	errCoordinatorKeyMissing  = errors.New("coordinator private key file missing")
+	errCoordinatorKeyCorrupt  = errors.New("coordinator private key file corrupt")
+	errCoordinatorKeyMismatch = errors.New("coordinator private key does not match database public key")
 )
 
 type coordinatorKeyOnDisk struct {

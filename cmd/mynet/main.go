@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/gcostello02/mynet/internal/client"
-	"github.com/gcostello02/mynet/internal/invitation"
 	"github.com/gcostello02/mynet/internal/config"
 	"github.com/gcostello02/mynet/internal/control"
 	"github.com/gcostello02/mynet/internal/daemon"
+	"github.com/gcostello02/mynet/internal/invitation"
 )
 
 func main() {

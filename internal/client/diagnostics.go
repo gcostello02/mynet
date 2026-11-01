@@ -25,7 +25,7 @@ type Diagnostics struct {
 	PeerOnline            bool
 	ICEState              string // live ICE agent/transport state when known
 	ICETransportState     string
-	ICENegotiationIdle    bool   // true when runtime has no active session path (VPN global idle)
+	ICENegotiationIdle    bool // true when runtime has no active session path (VPN global idle)
 	DataPathReady         bool
 	Connection            string
 	TURNUsed              bool
@@ -70,16 +70,16 @@ type Diagnostics struct {
 	BindSendBytes         uint64
 	BindSendNoTransport   uint64
 	BindSendErrors        uint64
-	BindRecvPackets        uint64
-	BindRecvBytes          uint64
-	BindRecvDropped        uint64
-	BindConsecutiveErrors  int
-	BindLastSendError      string
-	BindLastSendErrorAt    string
-	BindLastSendOKAt       string
-	BindLastRecvAt         string
-	RecoveryAttempts       int
-	RecoveryState          string
+	BindRecvPackets       uint64
+	BindRecvBytes         uint64
+	BindRecvDropped       uint64
+	BindConsecutiveErrors int
+	BindLastSendError     string
+	BindLastSendErrorAt   string
+	BindLastSendOKAt      string
+	BindLastRecvAt        string
+	RecoveryAttempts      int
+	RecoveryState         string
 }
 
 // Diagnose gathers signaling and path diagnostics for a peer.

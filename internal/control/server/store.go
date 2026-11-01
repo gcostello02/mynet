@@ -36,10 +36,10 @@ type Store struct {
 	dbPath               string
 	sqlDB                *sql.DB
 
-	meta         *NetworkMeta
-	admins       map[string]*AdminRecord
-	adminByUser  map[string]string
-	invitations  *invitationStore
+	meta          *NetworkMeta
+	admins        map[string]*AdminRecord
+	adminByUser   map[string]string
+	invitations   *invitationStore
 	adminSessions *adminSessionTable
 
 	devices  map[string]*DeviceRecord

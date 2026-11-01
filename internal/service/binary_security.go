@@ -10,9 +10,9 @@ import (
 
 // SecurityFinding describes a concrete install-path risk or OK state.
 type SecurityFinding struct {
-	Level   string // ok | warn | critical
-	Topic   string
-	Detail  string
+	Level  string // ok | warn | critical
+	Topic  string
+	Detail string
 }
 
 // AuditSupervisedBinaryPath inspects the executable launchd/systemd would run (no root required for most checks).

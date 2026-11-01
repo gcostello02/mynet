@@ -13,13 +13,13 @@ import (
 
 // PeerStats is parsed WireGuard UAPI state for one peer (no private keys).
 type PeerStats struct {
-	PublicKeyHex       string
+	PublicKeyHex         string
 	PublicKeyFingerprint string
-	Endpoint           string
-	AllowedIPs         []string
-	LastHandshake      time.Time
-	TxBytes            uint64
-	RxBytes            uint64
+	Endpoint             string
+	AllowedIPs           []string
+	LastHandshake        time.Time
+	TxBytes              uint64
+	RxBytes              uint64
 }
 
 // PeerStatsByPublicKey returns IPC stats for a configured peer public key (hex).

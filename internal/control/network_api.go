@@ -130,9 +130,9 @@ func (c *APIClient) AdminListDevices() ([]map[string]any, error) {
 
 func (c *APIClient) AdminCreateInvitation(label string, expiresInSec, maxUses int) (map[string]string, error) {
 	body := map[string]any{
-		"label":               label,
-		"expires_in_seconds":  expiresInSec,
-		"max_uses":            maxUses,
+		"label":              label,
+		"expires_in_seconds": expiresInSec,
+		"max_uses":           maxUses,
 	}
 	var resp map[string]string
 	if err := c.postJSON("/v1/admin/invitations", body, &resp, true); err != nil {

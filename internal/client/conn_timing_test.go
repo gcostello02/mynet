@@ -50,9 +50,9 @@ func TestMarkExistingAfterCycleResetNotEpochDuration(t *testing.T) {
 func TestSanitizeRemovesAbsurdStageDurations(t *testing.T) {
 	snap := ConnTimingSnapshot{
 		Stages: map[ConnStage]time.Duration{
-			StageWireGuardHandshake:   maxDisplayConnStage + time.Hour,
-			StageICEToWireGuard:       50 * time.Millisecond,
-			StageDataTransportReady:   10 * time.Millisecond,
+			StageWireGuardHandshake: maxDisplayConnStage + time.Hour,
+			StageICEToWireGuard:     50 * time.Millisecond,
+			StageDataTransportReady: 10 * time.Millisecond,
 		},
 		LastStageAt: 200 * 365 * 24 * time.Hour,
 		LastStage:   StageWireGuardHandshake,

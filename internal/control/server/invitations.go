@@ -22,8 +22,8 @@ type InvitationRecord struct {
 }
 
 var (
-	errInvitationInvalid = errors.New("invitation invalid")
-	errInvitationExpired = errors.New("invitation expired")
+	errInvitationInvalid   = errors.New("invitation invalid")
+	errInvitationExpired   = errors.New("invitation expired")
 	errInvitationExhausted = errors.New("invitation uses exhausted")
 )
 

@@ -3,9 +3,9 @@ package join
 import (
 	"bytes"
 	"crypto/ed25519"
-	"errors"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -49,7 +49,7 @@ func startTestCoordinator(t *testing.T) (*httptest.Server, invitation.Invite) {
 		ServerURL:              ts.URL,
 		NetworkID:              "default",
 		CoordinatorFingerprint: meta.CoordinatorFingerprint,
-		CoordinatorPublicKey:     meta.CoordinatorPublicKeyB64,
+		CoordinatorPublicKey:   meta.CoordinatorPublicKeyB64,
 		EnrollmentToken:        token,
 	}
 	return ts, inv
@@ -113,13 +113,13 @@ func TestVerifyCoordinatorRejectsForgedProof(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		sig := ed25519.Sign(wrongPriv, []byte("not-a-real-canonical-message"))
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"network_id":               inv.NetworkID,
-			"coordinator_fingerprint":  inv.CoordinatorFingerprint,
-			"coordinator_public_key":   inv.CoordinatorPublicKey,
-			"timestamp":                req.Timestamp,
-			"challenge":                req.Challenge,
-			"signature":                base64.StdEncoding.EncodeToString(sig),
-			"proof_version":            2,
+			"network_id":              inv.NetworkID,
+			"coordinator_fingerprint": inv.CoordinatorFingerprint,
+			"coordinator_public_key":  inv.CoordinatorPublicKey,
+			"timestamp":               req.Timestamp,
+			"challenge":               req.Challenge,
+			"signature":               base64.StdEncoding.EncodeToString(sig),
+			"proof_version":           2,
 		})
 	}))
 	defer forged.Close()

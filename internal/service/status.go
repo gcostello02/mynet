@@ -12,22 +12,22 @@ import (
 
 // HealthReport aggregates supervisor, daemon, and VPN readiness.
 type HealthReport struct {
-	Supervisor          string
-	Installed           bool // supervised install: local metadata and/or system unit
-	LocalSpecPresent    bool
-	LocalSpecReadable   bool
-	SystemUnitPresent   bool
-	SupervisorActive    bool
+	Supervisor            string
+	Installed             bool // supervised install: local metadata and/or system unit
+	LocalSpecPresent      bool
+	LocalSpecReadable     bool
+	SystemUnitPresent     bool
+	SupervisorActive      bool
 	SupervisorActiveKnown bool
-	BootAutostartEnabled bool
-	BootAutostartKnown  bool
-	EnabledHint         string
-	RunningHint         string
-	StateDir            string
-	DaemonReachable     bool
-	DaemonStatus        *daemon.Status
-	VPNDataReady        bool
-	LastError           string
+	BootAutostartEnabled  bool
+	BootAutostartKnown    bool
+	EnabledHint           string
+	RunningHint           string
+	StateDir              string
+	DaemonReachable       bool
+	DaemonStatus          *daemon.Status
+	VPNDataReady          bool
+	LastError             string
 }
 
 func CollectHealth(stateDir, localSpecPath string) HealthReport {
@@ -39,12 +39,12 @@ func CollectHealth(stateDir, localSpecPath string) HealthReport {
 	}
 	systemUnit := SystemUnitInstalled(layout)
 	hr := HealthReport{
-		StateDir:            stateDir,
-		LocalSpecPresent:    specPresent,
-		LocalSpecReadable:   specReadable,
-		SystemUnitPresent:   systemUnit,
-		Installed:           specPresent || systemUnit,
-		DaemonReachable:     daemon.DaemonReachable(stateDir),
+		StateDir:          stateDir,
+		LocalSpecPresent:  specPresent,
+		LocalSpecReadable: specReadable,
+		SystemUnitPresent: systemUnit,
+		Installed:         specPresent || systemUnit,
+		DaemonReachable:   daemon.DaemonReachable(stateDir),
 	}
 	if specReadable && spec.Supervisor != "" {
 		hr.Supervisor = spec.Supervisor

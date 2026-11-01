@@ -8,10 +8,10 @@ import (
 
 // UpgradeStages copies candidate to staged path after metadata verification.
 type UpgradePlan struct {
-	LivePath     string
+	LivePath      string
 	CandidatePath string
-	BackupPath   string
-	StagedPath   string
+	BackupPath    string
+	StagedPath    string
 }
 
 func PlanUpgrade(livePath, candidatePath, backupPath string) (UpgradePlan, error) {

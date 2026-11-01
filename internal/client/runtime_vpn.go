@@ -225,9 +225,9 @@ func (r *Runtime) supersedeVPNPeerLinkLocked(peerName string, l *PeerLink, reaso
 		return
 	}
 	iceTrace("vpn_peer_link_supersede", map[string]string{
-		"peer":       peerName,
+		"peer":        peerName,
 		"old_session": l.SessionID,
-		"reason":     reason,
+		"reason":      reason,
 	})
 	if l.Conn != nil {
 		_ = l.Conn.Close()

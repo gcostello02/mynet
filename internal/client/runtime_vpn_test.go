@@ -20,11 +20,11 @@ func (g *genConn) Close() error {
 	}
 	return nil
 }
-func (g *genConn) LocalAddr() net.Addr         { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
-func (g *genConn) RemoteAddr() net.Addr        { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 2)} }
-func (g *genConn) SetDeadline(time.Time) error       { return nil }
-func (g *genConn) SetReadDeadline(time.Time) error   { return nil }
-func (g *genConn) SetWriteDeadline(time.Time) error  { return nil }
+func (g *genConn) LocalAddr() net.Addr              { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (g *genConn) RemoteAddr() net.Addr             { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 2)} }
+func (g *genConn) SetDeadline(time.Time) error      { return nil }
+func (g *genConn) SetReadDeadline(time.Time) error  { return nil }
+func (g *genConn) SetWriteDeadline(time.Time) error { return nil }
 
 func TestStorePeerLinkIncrementsGeneration(t *testing.T) {
 	rt := NewRuntime(t.TempDir(), nil)

@@ -42,10 +42,10 @@ type Runtime struct {
 	cfg      config.ClientConfig
 	api      *control.APIClient
 
-	ws         *websocket.Conn
-	wsCancel   context.CancelFunc
-	wsWriteMu  sync.Mutex // serializes all WebSocket writes (gorilla allows one writer)
-	wsGen      uint64     // bumped on each connection swap; writers hold wsWriteMu during I/O
+	ws        *websocket.Conn
+	wsCancel  context.CancelFunc
+	wsWriteMu sync.Mutex // serializes all WebSocket writes (gorilla allows one writer)
+	wsGen     uint64     // bumped on each connection swap; writers hold wsWriteMu during I/O
 
 	activeSession        string
 	peerName             string
@@ -76,8 +76,8 @@ type Runtime struct {
 	incomingICE     map[string]bool
 	peerInFlightICE map[string]string // peer name -> session ID currently negotiating (VPN + app ICE)
 
-	peerICELockMu    sync.Mutex
-	peerICEHandleMu  map[string]*sync.Mutex
+	peerICELockMu   sync.Mutex
+	peerICEHandleMu map[string]*sync.Mutex
 
 	signalMu       sync.Mutex
 	signalHandlers map[string]func(control.WSMessage)
@@ -93,10 +93,10 @@ type Runtime struct {
 
 	peerOnlineLast map[string]bool // last known coordinator online bit per peer name
 
-	peerICEMu              sync.Mutex
-	peerICEGen             uint64
-	peerICECancel          map[string]peerICEAttempt
-	peerICESupersedeAllow  map[string]bool // set by cancelPeerICEAttempt before CreateSession (initiator)
+	peerICEMu             sync.Mutex
+	peerICEGen            uint64
+	peerICECancel         map[string]peerICEAttempt
+	peerICESupersedeAllow map[string]bool // set by cancelPeerICEAttempt before CreateSession (initiator)
 
 	signalingMu         sync.Mutex
 	signalingRunning    bool
@@ -108,8 +108,8 @@ type Runtime struct {
 
 	lastGatherReport icepkg.GatherReport
 
-	connTiming *connTiming
-	recovery       *recoveryTracker
+	connTiming       *connTiming
+	recovery         *recoveryTracker
 	signalingReadyAt time.Time
 
 	authRefreshMu     sync.Mutex
@@ -143,16 +143,16 @@ func NewRuntime(stateDir string, log *slog.Logger) *Runtime {
 		stateDir = config.DefaultStateDir()
 	}
 	return &Runtime{
-		StateDir:       stateDir,
-		Logger:         log,
-		connState:      StateDisconnected,
-		signalHandlers: make(map[string]func(control.WSMessage)),
-		pendingSignals: make(map[string][]control.WSMessage),
+		StateDir:        stateDir,
+		Logger:          log,
+		connState:       StateDisconnected,
+		signalHandlers:  make(map[string]func(control.WSMessage)),
+		pendingSignals:  make(map[string][]control.WSMessage),
 		incomingICE:     make(map[string]bool),
 		peerInFlightICE: make(map[string]string),
 		peerOnlineLast:  make(map[string]bool),
-		connTiming:     newConnTiming(),
-		recovery:       newRecoveryTracker(),
+		connTiming:      newConnTiming(),
+		recovery:        newRecoveryTracker(),
 	}
 }
 

@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gcostello02/mynet/internal/identity"
-	"github.com/gcostello02/mynet/internal/control"
 	"github.com/gcostello02/mynet/internal/config"
+	"github.com/gcostello02/mynet/internal/control"
 	"github.com/gcostello02/mynet/internal/control/server"
+	"github.com/gcostello02/mynet/internal/identity"
 	"github.com/gcostello02/mynet/internal/invitation"
 )
 
@@ -108,7 +108,7 @@ func TestJoinRejectsHTTPCoordinatorURL(t *testing.T) {
 	inv := invitation.Invite{
 		Version: invitation.Version, ServerURL: "http://example.com", NetworkID: "default",
 		CoordinatorFingerprint: fmt.Sprintf("%064x", bytes.Repeat([]byte{2}, 32)),
-		EnrollmentToken: "x",
+		EnrollmentToken:        "x",
 	}
 	invitation.AllowHTTPForTest = false
 	rt := NewRuntime(t.TempDir(), nil)

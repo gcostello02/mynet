@@ -56,16 +56,16 @@ type Node struct {
 }
 
 type PeerStatus struct {
-	Name         string
-	VPNIP        string
-	Transport    string
-	State        string
-	TURNUsed     bool
-	LocalType    string
-	RemoteType   string
-	LocalAddr    string
-	RemoteAddr   string
-	ICESessionID     string
+	Name                string
+	VPNIP               string
+	Transport           string
+	State               string
+	TURNUsed            bool
+	LocalType           string
+	RemoteType          string
+	LocalAddr           string
+	RemoteAddr          string
+	ICESessionID        string
 	ICEConnState        string
 	RecoveryAttempts    int
 	ICEFailedAttempts   int
