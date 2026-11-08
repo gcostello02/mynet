@@ -7,11 +7,11 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/ice/v4 v4.4.8
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.62.0
 	golang.org/x/term v0.47.0
 	golang.org/x/time v0.16.0
 	golang.zx2c4.com/wireguard v0.0.0-20261006164505-2631ce99a06f
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
